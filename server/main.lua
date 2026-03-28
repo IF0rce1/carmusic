@@ -1,8 +1,4 @@
 
-
-
-local xSound = exports.xsound
-
 RegisterNetEvent("carmusic:ChangeVolume")
 AddEventHandler("carmusic:ChangeVolume", function(vol, nome)
     local somafter = false
