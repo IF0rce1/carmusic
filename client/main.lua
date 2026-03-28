@@ -9,6 +9,7 @@ local myjob = nil
 local nomidaberto
 local SoundsPlaying = {}
 local customSong = false
+local interiorSoundState = {}
 --[[RegisterCommand("mota",function()
 	TriggerServerEvent("carmusic:ModifyURL",{})
 	TriggerServerEvent("carmusic:AddVehicle",{})
@@ -25,69 +26,21 @@ RegisterNUICallback("action", function(data)
 	if data.action == "seturl" then
 		ApplySound(0.20,nameid,true)
 		SetUrl(data.link,nameid)
-		if xSound:soundExists(nameid) then
-			print("hmm")
-			if xSound:isPaused(nameid) then
-				print("hmm2")
-				if xSound:soundExists(nameid) then
-					xSound:Destroy(nameid)
-					nomidaberto = nil
-				end
-				TriggerServerEvent("carmusic:ChangeState", true, nameid)
-				local esperar = 0
-				while nuiaberto do
-					Wait(1000)
-					if xSound:isPlaying(nameid) then
-						SendNUIMessage({
-							action = "TimeVid",
-							total = xSound:getMaxDuration(nameid),
-							played = xSound:getTimeStamp(nameid),
-						})
-					else
-						esperar = esperar +1
-					end
-					if esperar >= 5 then
-						break
-					end
-				end
-			end
+		if xSound:soundExists(nameid) and xSound:isPaused(nameid) then
+			TriggerServerEvent("carmusic:ChangeState", true, nameid)
 		end
 		customSong = true
 	elseif data.action == "numemelodie" then
 		vRP.notify({"Se reda acum: "..data.nume,"info"})
 	elseif data.action == "faauzit" then
 		ApplySound(0.9,nameid)
-	-- elseif data.action == "play" then
-	-- 	if xSound:soundExists(nameid) then
-	-- 		if xSound:isPaused(nameid) then
-	-- 			TriggerServerEvent("carmusic:ChangeState", true, nameid)
-	-- 			local esperar = 0
-	-- 			while nuiaberto do
-	-- 				Wait(1000)
-	-- 				if xSound:isPlaying(nameid) then
-	-- 					SendNUIMessage({
-	-- 						action = "TimeVid",
-	-- 						total = xSound:getMaxDuration(nameid),
-	-- 						played = xSound:getTimeStamp(nameid),
-	-- 					})
-	-- 				else
-	-- 					esperar = esperar +1
-	-- 				end
-	-- 				if esperar >= 5 then
-	-- 					break
-	-- 				end
-	-- 			end
-	-- 		end
-	-- 	end
+	elseif data.action == "play" then
+		if xSound:soundExists(nameid) and xSound:isPaused(nameid) then
+			TriggerServerEvent("carmusic:ChangeState", true, nameid)
+		end
 	elseif data.action == "pause" then
-		-- if xSound:soundExists(nameid) then
-		-- 	if xSound:isPlaying(nameid) then
-		-- 		TriggerServerEvent("carmusic:ChangeState", false, nameid)
-		-- 	end
-		-- end
-		if xSound:soundExists(nameid) then
-			xSound:Destroy(nameid)
-			nomidaberto = nil
+		if xSound:soundExists(nameid) and xSound:isPlaying(nameid) then
+			TriggerServerEvent("carmusic:ChangeState", false, nameid)
 		end
 		customSong = false
 	elseif data.action == "exit" then
@@ -624,10 +577,11 @@ function StartMusicLoop(i)
 					if DoesEntityExist(carro) then
 						if GetEntityType(carro) == 2 then
 							if GetVehicleNumberPlateText(carro) == v.name then
-								carrofound = true
-								local cordsveh = GetEntityCoords(carro)
-								local geraldist = #(cordsveh-coordsped)
-								if geraldist <= v.range+50 then
+									carrofound = true
+									local cordsveh = GetEntityCoords(carro)
+									local geraldist = #(cordsveh-coordsped)
+									local cabinIsolation = getVehicleCabinIsolation(carro)
+									if geraldist <= v.range+50 then
 									local avolume = xSound:getVolume(v.name)
 									local dina = xSound:isDynamic(v.name)
 									local getpos = v.coords
@@ -639,9 +593,7 @@ function StartMusicLoop(i)
 										if dina then
 											xSound:setSoundDynamic(v.name,false)
 										end
-										if avolume ~= v.volume then
-											xSound:setVolume(v.name,v.volume)
-										end
+										applyInteriorAudioProfile(v.name, v.volume, geraldist, true, cabinIsolation)
 										if getposdif >= 5.0 or poschanged then
 											poschanged = false
 											v.coords = cordsveh
@@ -653,9 +605,7 @@ function StartMusicLoop(i)
 										if not dina then
 											xSound:setSoundDynamic(v.name,true)
 										end
-										if avolume ~= v.volume then
-											xSound:setVolumeMax(v.name,v.volume)
-										end
+										applyInteriorAudioProfile(v.name, v.volume, geraldist, false, cabinIsolation)
 										if geraldist >= v.range+20 then
 											sleep = (geraldist*100)/3
 										end
@@ -734,6 +684,58 @@ function StartMusicLoop(i)
 			Wait(sleep)
 		end
 	end)
+end
+
+
+function getVehicleCabinIsolation(vehicle)
+	if vehicle == 0 or not DoesEntityExist(vehicle) then
+		return 0.0
+	end
+
+	local checkedDoors = 0
+	local openedDoors = 0
+	for door = 0, 5 do
+		if not IsVehicleDoorDamaged(vehicle, door) then
+			checkedDoors = checkedDoors + 1
+			if GetVehicleDoorAngleRatio(vehicle, door) > 0.05 then
+				openedDoors = openedDoors + 1
+			end
+		end
+	end
+
+	if checkedDoors == 0 then
+		return 1.0
+	end
+
+	return (checkedDoors - openedDoors) / checkedDoors
+end
+
+function applyInteriorAudioProfile(soundName, baseVolume, distanceToVehicle, inSameVehicle, cabinIsolation)
+	if not xSound:soundExists(soundName) then
+		return
+	end
+
+	local profile = interiorSoundState[soundName] or {}
+	local targetVolume = baseVolume
+
+	if inSameVehicle then
+		targetVolume = math.min(1.0, baseVolume * 1.08)
+	else
+		local closeFalloff = math.max(0.0, math.min(1.0, 1.0 - (distanceToVehicle / 35.0)))
+		local isolationMuffle = 1.0 - (cabinIsolation * 0.65)
+		targetVolume = baseVolume * (0.28 + (0.72 * closeFalloff)) * isolationMuffle
+	end
+
+	if not profile.lastVolume or math.abs(profile.lastVolume - targetVolume) > 0.015 then
+		if inSameVehicle then
+			xSound:setVolume(soundName, targetVolume)
+		else
+			xSound:setVolumeMax(soundName, targetVolume)
+		end
+		profile.lastVolume = targetVolume
+	end
+
+	interiorSoundState[soundName] = profile
 end
 
 function DrawText3D(x, y, z, text,r,g,b,a)
