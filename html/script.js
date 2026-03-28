@@ -1,34 +1,68 @@
 let customRadios;
+const RESOURCE_NAME = (typeof GetParentResourceName === 'function' && GetParentResourceName()) || 'carmusic'
+const NUI_URL = `https://${RESOURCE_NAME}`
+const nuiPost = (route, payload = {}) => {
+  return fetch(`${NUI_URL}/${route}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json; charset=UTF-8' },
+    body: JSON.stringify(payload),
+  }).catch(() => null)
+}
+
+const showStatus = (message, isError = false) => {
+  const el = document.getElementById('statusMessage')
+  if (!el) return
+  el.innerText = message
+  el.style.color = isError ? '#ff9f9f' : '#c8fff6'
+  el.classList.remove('hidden')
+  clearTimeout(showStatus._timer)
+  showStatus._timer = setTimeout(() => el.classList.add('hidden'), 3000)
+}
+
+const normalizeUrl = (input) => {
+  let value = (input || '').trim()
+  if (!value) return ''
+  if (!/^https?:\/\//i.test(value)) value = `https://${value}`
+  return value
+}
 
 $('#volumeUp').click(function () {
-  $.post('https://carmusic/action', JSON.stringify({ action: 'volumeup' }))
+  nuiPost('action', { action: 'volumeup' })
 })
 
 $('#volumeDown').click(function () {
-  $.post('https://carmusic/action', JSON.stringify({ action: 'volumedown' }))
+  nuiPost('action', { action: 'volumedown' })
 })
 
 $('#loopButton').click(function () {
-  $.post('https://carmusic/action', JSON.stringify({ action: 'loop' }))
+  nuiPost('action', { action: 'loop' })
 })
 
 $('#stopButton').click(function () {
-  $.post('https://carmusic/action', JSON.stringify({ action: 'pause' }))
+  nuiPost('action', { action: 'pause' })
 })
 
 $('#prevButton').click(function () {
-  $.post('https://carmusic/action', JSON.stringify({ action: 'back' }))
+  nuiPost('action', { action: 'back' })
 })
 
 $('#nextButton').click(function () {
-  $.post('https://carmusic/action', JSON.stringify({ action: 'forward' }))
+  nuiPost('action', { action: 'forward' })
 })
 
 var vidname = 'Name not Found'
 $('#playButton').click(function () {
   if (customRadios && typeof customRadios.stop === 'function') customRadios.stop();
-  var link = document.getElementById('youtubeLink').value
-  $.post('https://carmusic/action', JSON.stringify({ action: 'seturl', link: link }))
+  const raw = document.getElementById('youtubeLink').value
+  const link = normalizeUrl(raw)
+  if (!link || !/^https?:\/\//i.test(link)) {
+    showStatus('URL invalid. Folosește link direct http/https.', true)
+    return
+  }
+
+  nuiPost('action', { action: 'seturl', link: link })
+  nuiPost('action', { action: 'play' })
+  showStatus('Se încarcă stream-ul...')
   getNameFile(link)
   document.getElementById('youtubeLink').value = ''
 })
@@ -129,7 +163,7 @@ $(document).ready(function () {
   $('#carmusic').hide()
   document.onkeyup = function (ev) {
     if (ev.which == 27) {
-      $.post('https://carmusic/action', JSON.stringify({ action: 'exit' }))
+      nuiPost('action', { action: 'exit' })
     }
   }
 })
@@ -186,7 +220,7 @@ Radio.prototype = {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-  fetch('https://carmusic/radio:ready', { method: 'POST', body: '{}' })
+  nuiPost('radio:ready', {})
 
   window.addEventListener('message', (event) => {
     let item = event.data
@@ -209,11 +243,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 $('#carmusicNowListen').fadeOut(500)
               }, 2000)
             })
-            $.post('https://carmusic/action', JSON.stringify({ action: 'pause' }))
+            nuiPost('action', { action: 'pause' })
             customRadios.play(index)
           }
         } else {
-          fetch('https://carmusic/radio:ready', { method: 'POST', body: '{}' })
+          nuiPost('radio:ready', {})
         }
         break
       case '_stopRadio':
@@ -226,6 +260,62 @@ document.addEventListener('DOMContentLoaded', () => {
 const carplayEngine = {
   sounds: {},
   listener: { x: 0, y: 0, z: 0, heading: 0 },
+  audioContext: null,
+}
+
+function getAudioContext() {
+  if (carplayEngine.audioContext) return carplayEngine.audioContext
+  const Ctx = window.AudioContext || window.webkitAudioContext
+  if (!Ctx) return null
+  carplayEngine.audioContext = new Ctx()
+  return carplayEngine.audioContext
+}
+
+function ensureFxChain(entry) {
+  if (entry.fxChainReady || !entry.howl) return
+  const sound = entry.howl._sounds && entry.howl._sounds[0]
+  if (!sound || !sound._node) return
+  const ctx = getAudioContext()
+  if (!ctx || !ctx.createMediaElementSource) return
+  try {
+    const source = ctx.createMediaElementSource(sound._node)
+    const low = ctx.createBiquadFilter()
+    low.type = 'lowshelf'
+    low.frequency.value = 180
+    low.gain.value = 0
+    const mid = ctx.createBiquadFilter()
+    mid.type = 'peaking'
+    mid.frequency.value = 1400
+    mid.Q.value = 0.9
+    mid.gain.value = 0
+    const high = ctx.createBiquadFilter()
+    high.type = 'highshelf'
+    high.frequency.value = 3800
+    high.gain.value = 0
+    const compressor = ctx.createDynamicsCompressor()
+    compressor.threshold.value = -20
+    compressor.ratio.value = 3
+    source.connect(low)
+    low.connect(mid)
+    mid.connect(high)
+    high.connect(compressor)
+    compressor.connect(ctx.destination)
+    entry.fx = { low, mid, high, compressor }
+    entry.fxChainReady = true
+  } catch (_) {
+    entry.fxChainReady = false
+  }
+}
+
+function applyFx(entry) {
+  ensureFxChain(entry)
+  if (!entry.fx) return
+  const fx = entry.fxPreset || {}
+  entry.fx.low.gain.value = fx.lowGain || 0
+  entry.fx.mid.gain.value = fx.midGain || 0
+  entry.fx.high.gain.value = fx.highGain || 0
+  entry.fx.compressor.threshold.value = fx.threshold || -20
+  entry.fx.compressor.ratio.value = fx.ratio || 3
 }
 
 function distance3(a, b) {
@@ -256,7 +346,11 @@ function engineTick() {
     const target = (data.maxVolume || data.volume || 0) * attenuation
     const current = data.currentVolume || 0
     data.currentVolume = current + ((target - current) * 0.35)
-    data.howl.volume(Math.max(0, Math.min(1, data.currentVolume)))
+    const safeVol = Math.max(0, Math.min(1, data.currentVolume))
+    if (Math.abs((data.lastAppliedVolume || 0) - safeVol) > 0.008) {
+      data.howl.volume(safeVol)
+      data.lastAppliedVolume = safeVol
+    }
     if (typeof data.howl.stereo === 'function') {
       data.howl.stereo(computePan(carplayEngine.listener, data.position))
     }
@@ -264,6 +358,38 @@ function engineTick() {
 }
 
 setInterval(engineTick, 60)
+
+function createHowlWithRetry(entry, url, loop) {
+  const retries = entry.retryCount || 0
+  const howl = new Howl({
+    src: [url],
+    html5: true,
+    loop: !!loop,
+    volume: 0.0,
+    onload: () => {
+      entry.retryCount = 0
+      showStatus('Stream conectat.')
+    },
+    onloaderror: () => {
+      if (retries < 3) {
+        entry.retryCount = retries + 1
+        showStatus(`Retry stream ${entry.retryCount}/3...`, true)
+        setTimeout(() => {
+          if (entry.howl) entry.howl.unload()
+          entry.howl = createHowlWithRetry(entry, url, loop)
+          entry.howl.play()
+        }, 350 * (retries + 1))
+      } else {
+        showStatus('Nu s-a putut încărca stream-ul (URL/CORS).', true)
+      }
+    },
+    onplayerror: () => {
+      showStatus('Play error, reîncerc...', true)
+      howl.once('unlock', () => howl.play())
+    },
+  })
+  return howl
+}
 
 window.addEventListener('message', function (event) {
   const data = event.data
@@ -290,12 +416,7 @@ window.addEventListener('message', function (event) {
     let entry = carplayEngine.sounds[data.name]
     if (!entry || !entry.howl || entry.url !== data.url) {
       if (entry && entry.howl) entry.howl.unload()
-      const howl = new Howl({
-        src: [data.url],
-        html5: true,
-        loop: !!data.loop,
-        volume: 0.0,
-      })
+      const howl = createHowlWithRetry(entry || {}, data.url, data.loop)
       howl.play()
       entry = { howl: howl, currentVolume: 0.0 }
       carplayEngine.sounds[data.name] = entry
@@ -309,6 +430,7 @@ window.addEventListener('message', function (event) {
     entry.howl.loop(entry.loop)
     if (data.paused) entry.howl.pause()
     else if (!entry.howl.playing()) entry.howl.play()
+    applyFx(entry)
     return
   }
 
@@ -318,7 +440,7 @@ window.addEventListener('message', function (event) {
   if (data.cmd === 'resume' && !snd.howl.playing()) snd.howl.play()
   if (data.cmd === 'setUrl') {
     snd.howl.unload()
-    snd.howl = new Howl({ src: [data.url], html5: true, loop: !!snd.loop, volume: 0.0 })
+    snd.howl = createHowlWithRetry(snd, data.url, snd.loop)
     snd.howl.play()
     snd.url = data.url
   }
@@ -331,6 +453,10 @@ window.addEventListener('message', function (event) {
   if (data.cmd === 'setLoop') {
     snd.loop = !!data.value
     snd.howl.loop(snd.loop)
+  }
+  if (data.cmd === 'setFx') {
+    snd.fxPreset = data.value || {}
+    applyFx(snd)
   }
   if (data.cmd === 'seek' && typeof snd.howl.seek === 'function') snd.howl.seek(data.value || 0)
 })

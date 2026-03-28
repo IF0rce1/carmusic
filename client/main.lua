@@ -108,6 +108,20 @@ xSound = {
 		SendNUIMessage({ action = "carplayAudio", cmd = "setLoop", name = name, value = state.loop })
 		return true
 	end,
+	setFx = function(self, name, fxData)
+		local state = standaloneAudioState[name]
+		if not state then return false end
+		SendNUIMessage({ action = "carplayAudio", cmd = "setFx", name = name, value = fxData or {} })
+		return true
+	end,
+	setSubmixPreset = function(self, name, preset)
+		local presets = {
+			inside = { lowGain = 2.5, midGain = -1.2, highGain = -2.8, threshold = -22, ratio = 2.6 },
+			outside = { lowGain = -1.0, midGain = -2.0, highGain = -4.0, threshold = -24, ratio = 3.2 },
+			flat = { lowGain = 0.0, midGain = 0.0, highGain = 0.0, threshold = -20, ratio = 3.0 }
+		}
+		return self:setFx(name, presets[preset] or presets.flat)
+	end,
 	PlayUrlPos = function(self, name, url, vol, coords, loop, options)
 		standaloneAudioState[name] = {
 			url = url,
@@ -988,8 +1002,10 @@ function applyInteriorAudioProfile(soundName, baseVolume, distanceToVehicle, inS
 	if not profile.lastVolume or math.abs(profile.lastVolume - smoothedVolume) > 0.007 then
 		if inSameVehicle then
 			xSound:setVolume(soundName, smoothedVolume)
+			xSound:setSubmixPreset(soundName, "inside")
 		else
 			xSound:setVolumeMax(soundName, smoothedVolume)
+			xSound:setSubmixPreset(soundName, "outside")
 		end
 		profile.lastVolume = smoothedVolume
 	end
