@@ -4,43 +4,148 @@ local vRP = Proxy.getInterface("vRP")
 Tunnel.bindInterface("xradio_music",Music)
 local datasoundinfo = {}
 local nuiaberto = false
-local rawXSound = exports.xsound
-local function safeXSoundCall(method, defaultValue, ...)
-	if not rawXSound or type(rawXSound[method]) ~= "function" then
-		return defaultValue
-	end
+local standaloneAudioState = {}
+local function nowMs()
+	return GetGameTimer()
+end
 
-	local ok, result = pcall(rawXSound[method], rawXSound, ...)
-	if not ok then
-		return defaultValue
-	end
-
-	return result
+local function syncStandaloneSound(name)
+	local state = standaloneAudioState[name]
+	if not state then return end
+	SendNUIMessage({
+		action = "carplayAudio",
+		cmd = "upsert",
+		name = name,
+		url = state.url,
+		position = { x = state.pos.x, y = state.pos.y, z = state.pos.z },
+		volume = state.baseVolume,
+		maxVolume = state.maxVolume,
+		range = state.range,
+		loop = state.loop,
+		paused = state.paused,
+		dynamic = state.dynamic
+	})
 end
 
 xSound = {
-	soundExists = function(self, name) return safeXSoundCall("soundExists", false, name) end,
-	isPaused = function(self, name) return safeXSoundCall("isPaused", false, name) end,
-	isPlaying = function(self, name) return safeXSoundCall("isPlaying", false, name) end,
-	getMaxDuration = function(self, name) return safeXSoundCall("getMaxDuration", 0.0, name) end,
-	getTimeStamp = function(self, name) return safeXSoundCall("getTimeStamp", 0.0, name) end,
-	getVolume = function(self, name) return safeXSoundCall("getVolume", 0.0, name) end,
-	Destroy = function(self, name) return safeXSoundCall("Destroy", false, name) end,
-	isLooped = function(self, name) return safeXSoundCall("isLooped", false, name) end,
-	getLink = function(self, name) return safeXSoundCall("getLink", nil, name) end,
-	isDynamic = function(self, name) return safeXSoundCall("isDynamic", false, name) end,
-	getPosition = function(self, name) return safeXSoundCall("getPosition", vector3(0.0, 0.0, 0.0), name) end,
-	setTimeStamp = function(self, name, value) return safeXSoundCall("setTimeStamp", false, name, value) end,
-	Distance = function(self, name, value) return safeXSoundCall("Distance", false, name, value) end,
-	setSoundDynamic = function(self, name, value) return safeXSoundCall("setSoundDynamic", false, name, value) end,
-	setVolume = function(self, name, value) return safeXSoundCall("setVolume", false, name, value) end,
-	setVolumeMax = function(self, name, value) return safeXSoundCall("setVolumeMax", false, name, value) end,
-	setSoundURL = function(self, name, url) return safeXSoundCall("setSoundURL", false, name, url) end,
-	Position = function(self, name, pos) return safeXSoundCall("Position", false, name, pos) end,
-	setSoundLoop = function(self, name, value) return safeXSoundCall("setSoundLoop", false, name, value) end,
-	PlayUrlPos = function(self, name, url, vol, coords, loop, options) return safeXSoundCall("PlayUrlPos", false, name, url, vol, coords, loop, options) end,
-	Resume = function(self, name) return safeXSoundCall("Resume", false, name) end,
-	Pause = function(self, name) return safeXSoundCall("Pause", false, name) end,
+	soundExists = function(self, name) return standaloneAudioState[name] ~= nil end,
+	isPaused = function(self, name) return standaloneAudioState[name] and standaloneAudioState[name].paused or false end,
+	isPlaying = function(self, name) return standaloneAudioState[name] and not standaloneAudioState[name].paused or false end,
+	getMaxDuration = function(self, name) return 0.0 end,
+	getTimeStamp = function(self, name)
+		local state = standaloneAudioState[name]
+		if not state then return 0.0 end
+		if state.paused then return state.timestamp end
+		return state.timestamp + ((nowMs() - state.lastResumeMs) / 1000.0)
+	end,
+	getVolume = function(self, name) return standaloneAudioState[name] and standaloneAudioState[name].maxVolume or 0.0 end,
+	Destroy = function(self, name)
+		standaloneAudioState[name] = nil
+		SendNUIMessage({ action = "carplayAudio", cmd = "destroy", name = name })
+		return true
+	end,
+	isLooped = function(self, name) return standaloneAudioState[name] and standaloneAudioState[name].loop or false end,
+	getLink = function(self, name) return standaloneAudioState[name] and standaloneAudioState[name].url or nil end,
+	isDynamic = function(self, name) return standaloneAudioState[name] and standaloneAudioState[name].dynamic or false end,
+	getPosition = function(self, name) return standaloneAudioState[name] and standaloneAudioState[name].pos or vector3(0.0, 0.0, 0.0) end,
+	setTimeStamp = function(self, name, value)
+		local state = standaloneAudioState[name]
+		if not state then return false end
+		state.timestamp = value or 0.0
+		state.lastResumeMs = nowMs()
+		SendNUIMessage({ action = "carplayAudio", cmd = "seek", name = name, value = state.timestamp })
+		return true
+	end,
+	Distance = function(self, name, value)
+		local state = standaloneAudioState[name]
+		if not state then return false end
+		state.range = value
+		syncStandaloneSound(name)
+		return true
+	end,
+	setSoundDynamic = function(self, name, value)
+		local state = standaloneAudioState[name]
+		if not state then return false end
+		state.dynamic = value and true or false
+		syncStandaloneSound(name)
+		return true
+	end,
+	setVolume = function(self, name, value)
+		local state = standaloneAudioState[name]
+		if not state then return false end
+		state.baseVolume = value
+		state.maxVolume = value
+		SendNUIMessage({ action = "carplayAudio", cmd = "setVolume", name = name, value = value })
+		return true
+	end,
+	setVolumeMax = function(self, name, value)
+		local state = standaloneAudioState[name]
+		if not state then return false end
+		state.maxVolume = value
+		SendNUIMessage({ action = "carplayAudio", cmd = "setVolumeMax", name = name, value = value })
+		return true
+	end,
+	setSoundURL = function(self, name, url)
+		local state = standaloneAudioState[name]
+		if not state then return false end
+		state.url = url
+		state.timestamp = 0.0
+		state.lastResumeMs = nowMs()
+		SendNUIMessage({ action = "carplayAudio", cmd = "setUrl", name = name, url = url })
+		return true
+	end,
+	Position = function(self, name, pos)
+		local state = standaloneAudioState[name]
+		if not state then return false end
+		state.pos = pos
+		SendNUIMessage({ action = "carplayAudio", cmd = "setPosition", name = name, position = { x = pos.x, y = pos.y, z = pos.z } })
+		return true
+	end,
+	setSoundLoop = function(self, name, value)
+		local state = standaloneAudioState[name]
+		if not state then return false end
+		state.loop = value and true or false
+		SendNUIMessage({ action = "carplayAudio", cmd = "setLoop", name = name, value = state.loop })
+		return true
+	end,
+	PlayUrlPos = function(self, name, url, vol, coords, loop, options)
+		standaloneAudioState[name] = {
+			url = url,
+			pos = coords,
+			baseVolume = vol or 0.2,
+			maxVolume = vol or 0.2,
+			range = 35.0,
+			loop = loop and true or false,
+			paused = false,
+			dynamic = true,
+			timestamp = 0.0,
+			lastResumeMs = nowMs()
+		}
+		syncStandaloneSound(name)
+		if options and options.onPlayStart then
+			CreateThread(function()
+				Wait(25)
+				options.onPlayStart({})
+			end)
+		end
+		return true
+	end,
+	Resume = function(self, name)
+		local state = standaloneAudioState[name]
+		if not state then return false end
+		state.paused = false
+		state.lastResumeMs = nowMs()
+		SendNUIMessage({ action = "carplayAudio", cmd = "resume", name = name })
+		return true
+	end,
+	Pause = function(self, name)
+		local state = standaloneAudioState[name]
+		if not state then return false end
+		state.timestamp = state.timestamp + ((nowMs() - state.lastResumeMs) / 1000.0)
+		state.paused = true
+		SendNUIMessage({ action = "carplayAudio", cmd = "pause", name = name })
+		return true
+	end,
 }
 local myjob = nil
 local nomidaberto
@@ -1078,5 +1183,20 @@ Citizen.CreateThread(function()
 		else
 			SetUserRadioControlEnabled(true)
 		end
+	end
+end)
+
+Citizen.CreateThread(function()
+	while true do
+		Wait(80)
+		local ped = PlayerPedId()
+		local coords = GetEntityCoords(ped)
+		local heading = GetEntityHeading(ped)
+		SendNUIMessage({
+			action = "carplayAudio",
+			cmd = "listener",
+			position = { x = coords.x, y = coords.y, z = coords.z },
+			heading = heading
+		})
 	end
 end)
