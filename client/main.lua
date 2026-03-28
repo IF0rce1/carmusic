@@ -10,6 +10,50 @@ local nomidaberto
 local SoundsPlaying = {}
 local customSong = false
 local interiorSoundState = {}
+
+local function canControlCurrentVehicleRadio()
+	local ped = PlayerPedId()
+	if not IsPedInAnyVehicle(ped, false) then
+		return false
+	end
+
+	local vehicle = GetVehiclePedIsIn(ped, false)
+	if vehicle == 0 then
+		return false
+	end
+
+	-- allow both front seats: driver (-1) and front passenger (0)
+	return GetPedInVehicleSeat(vehicle, -1) == ped or GetPedInVehicleSeat(vehicle, 0) == ped
+end
+
+local function isControlAction(action)
+	return action == "seturl"
+		or action == "play"
+		or action == "pause"
+		or action == "volumeup"
+		or action == "volumedown"
+		or action == "loop"
+		or action == "forward"
+		or action == "back"
+		or action == "faauzit"
+end
+
+local function isSoundLoopTracked(index)
+	for i = 1, #SoundsPlaying do
+		if SoundsPlaying[i] == index then
+			return true
+		end
+	end
+
+	return false
+end
+
+local function addSoundLoop(index)
+	if index and not isSoundLoopTracked(index) then
+		table.insert(SoundsPlaying, index)
+		StartMusicLoop(index)
+	end
+end
 --[[RegisterCommand("mota",function()
 	TriggerServerEvent("carmusic:ModifyURL",{})
 	TriggerServerEvent("carmusic:AddVehicle",{})
@@ -18,6 +62,11 @@ end)]]
 RegisterNUICallback("action", function(data)
 	local _source = source
 	local nameid = nomidaberto
+
+	if isControlAction(data.action) and not canControlCurrentVehicleRadio() then
+		vRP.notify({"Doar soferul sau pasagerul din dreapta fata poate controla carradio-ul.","error"})
+		return
+	end
 	if IsPedInAnyVehicle(PlayerPedId(), false) then
 		local veh = GetVehiclePedIsIn(PlayerPedId(),false)
 		local plate = GetVehicleNumberPlateText(veh)
@@ -176,6 +225,10 @@ end
 
 if Config.ItemInVehicle then
 	RegisterCommand(Config.CommandVehicle, function(source, args, rawCommand)
+		if not canControlCurrentVehicleRadio() then
+			vRP.notify({"Doar soferul sau pasagerul din dreapta fata poate deschide carradio-ul.","error"})
+			return
+		end
 		show()
 	end, false)
 end
@@ -183,6 +236,10 @@ end
 if Config.ItemInVehicle then
 	RegisterNetEvent("carmusic:ShowNui")
 	AddEventHandler("carmusic:ShowNui", function()
+		if not canControlCurrentVehicleRadio() then
+			vRP.notify({"Doar soferul sau pasagerul din dreapta fata poate deschide carradio-ul.","error"})
+			return
+		end
 		show()
 	end)
 end
@@ -313,8 +370,7 @@ AddEventHandler("carmusic:AddVehicle", function(data)
 			xSound:Distance(v.name,v.range)
 		end,
 	})
-	table.insert(SoundsPlaying, #Zones)
-	StartMusicLoop(#Zones)
+	addSoundLoop(#Zones)
 end)
 
 -- RegisterCommand("testSong",function()
@@ -412,8 +468,7 @@ AddEventHandler("carmusic:ModifyURL", function(data)
 		end
 	end
 	if not encontrads and iss then
-		table.insert(SoundsPlaying, iss)
-		StartMusicLoop(iss)
+		addSoundLoop(iss)
 	end
 end)
 
@@ -435,8 +490,7 @@ AddEventHandler("carmusic:ChangeState", function(tipo, nome)
 		end
 	end
 	if tipo and iss then
-		table.insert(SoundsPlaying, iss)
-		StartMusicLoop(iss)
+		addSoundLoop(iss)
 	elseif iss then
 		for i = 1, #SoundsPlaying do
 			local v = SoundsPlaying[i]
@@ -535,12 +589,11 @@ AddEventHandler("carmusic:SendData", function(data)
 					xSound:setTimeStamp(v.name, v.deftime)
 					xSound:Distance(v.name,v.range)
 				end,
-			})
-			if v.popo then
-				table.insert(SoundsPlaying, i)
-				StartMusicLoop(i)
+				})
+				if v.popo then
+					addSoundLoop(i)
+				end
 			end
-		end
     end
 end)
 
@@ -580,7 +633,7 @@ function StartMusicLoop(i)
 									carrofound = true
 									local cordsveh = GetEntityCoords(carro)
 									local geraldist = #(cordsveh-coordsped)
-									local cabinIsolation = getVehicleCabinIsolation(carro)
+									local cabinIsolation, totalLeak = getVehicleAcousticData(carro)
 									if geraldist <= v.range+50 then
 									local avolume = xSound:getVolume(v.name)
 									local dina = xSound:isDynamic(v.name)
@@ -593,7 +646,7 @@ function StartMusicLoop(i)
 										if dina then
 											xSound:setSoundDynamic(v.name,false)
 										end
-										applyInteriorAudioProfile(v.name, v.volume, geraldist, true, cabinIsolation)
+										applyInteriorAudioProfile(v.name, v.volume, geraldist, true, cabinIsolation, totalLeak)
 										if getposdif >= 5.0 or poschanged then
 											poschanged = false
 											v.coords = cordsveh
@@ -605,7 +658,7 @@ function StartMusicLoop(i)
 										if not dina then
 											xSound:setSoundDynamic(v.name,true)
 										end
-										applyInteriorAudioProfile(v.name, v.volume, geraldist, false, cabinIsolation)
+										applyInteriorAudioProfile(v.name, v.volume, geraldist, false, cabinIsolation, totalLeak)
 										if geraldist >= v.range+20 then
 											sleep = (geraldist*100)/3
 										end
@@ -641,12 +694,13 @@ function StartMusicLoop(i)
 							end
 						end
 					end
-				else
-					if xSound:soundExists(v.name) then
-						-- print("sunet sters")
-						xSound:Destroy(v.name)
+					else
+						if xSound:soundExists(v.name) then
+							-- avoid interrupting playback on short network entity desync
+							xSound:setVolumeMax(v.name,0.0)
+							Wait(500)
+						end
 					end
-				end
 				if not carrofound and xSound:soundExists(v.name) then
 					if not xSound:isDynamic(v.name) then
 						xSound:setSoundDynamic(v.name,true)
@@ -687,9 +741,9 @@ function StartMusicLoop(i)
 end
 
 
-function getVehicleCabinIsolation(vehicle)
+function getVehicleAcousticData(vehicle)
 	if vehicle == 0 or not DoesEntityExist(vehicle) then
-		return 0.0
+		return 0.0, 0.0
 	end
 
 	local checkedDoors = 0
@@ -703,14 +757,25 @@ function getVehicleCabinIsolation(vehicle)
 		end
 	end
 
-	if checkedDoors == 0 then
-		return 1.0
+	local doorLeak = checkedDoors > 0 and (openedDoors / checkedDoors) or 0.0
+
+	local checkedWindows = 0
+	local openWindows = 0
+	for window = 0, 3 do
+		checkedWindows = checkedWindows + 1
+		if not IsVehicleWindowIntact(vehicle, window) then
+			openWindows = openWindows + 1
+		end
 	end
 
-	return (checkedDoors - openedDoors) / checkedDoors
+	local windowLeak = checkedWindows > 0 and (openWindows / checkedWindows) or 0.0
+	local totalLeak = math.max(0.0, math.min(1.0, (doorLeak * 0.75) + (windowLeak * 0.45)))
+	local cabinIsolation = math.max(0.0, math.min(1.0, (1.0 - doorLeak) * (1.0 - (windowLeak * 0.60))))
+
+	return cabinIsolation, totalLeak
 end
 
-function applyInteriorAudioProfile(soundName, baseVolume, distanceToVehicle, inSameVehicle, cabinIsolation)
+function applyInteriorAudioProfile(soundName, baseVolume, distanceToVehicle, inSameVehicle, cabinIsolation, totalLeak)
 	if not xSound:soundExists(soundName) then
 		return
 	end
@@ -719,11 +784,13 @@ function applyInteriorAudioProfile(soundName, baseVolume, distanceToVehicle, inS
 	local targetVolume = baseVolume
 
 	if inSameVehicle then
-		targetVolume = math.min(1.0, baseVolume * 1.08)
+		local insidePresence = 0.94 + (0.08 * cabinIsolation)
+		targetVolume = math.min(1.0, baseVolume * insidePresence)
 	else
-		local closeFalloff = math.max(0.0, math.min(1.0, 1.0 - (distanceToVehicle / 35.0)))
-		local isolationMuffle = 1.0 - (cabinIsolation * 0.65)
-		targetVolume = baseVolume * (0.28 + (0.72 * closeFalloff)) * isolationMuffle
+		local closeFalloff = math.max(0.0, math.min(1.0, 1.0 - (distanceToVehicle / 42.0)))
+		local shellMuffle = 1.0 - (cabinIsolation * 0.88)
+		local leakBoost = 0.35 + (0.65 * totalLeak)
+		targetVolume = baseVolume * (0.12 + (0.58 * closeFalloff)) * shellMuffle * leakBoost
 	end
 
 	if not profile.lastVolume or math.abs(profile.lastVolume - targetVolume) > 0.015 then
