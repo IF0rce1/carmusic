@@ -633,7 +633,8 @@ function StartMusicLoop(i)
 									carrofound = true
 									local cordsveh = GetEntityCoords(carro)
 									local geraldist = #(cordsveh-coordsped)
-									local cabinIsolation, totalLeak = getVehicleAcousticData(carro)
+									local speedcar = GetEntitySpeed(carro)*3.6
+									local cabinIsolation, totalLeak, openings = getVehicleAcousticData(carro)
 									if geraldist <= v.range+50 then
 									local avolume = xSound:getVolume(v.name)
 									local dina = xSound:isDynamic(v.name)
@@ -646,7 +647,7 @@ function StartMusicLoop(i)
 										if dina then
 											xSound:setSoundDynamic(v.name,false)
 										end
-										applyInteriorAudioProfile(v.name, v.volume, geraldist, true, cabinIsolation, totalLeak)
+											applyInteriorAudioProfile(v.name, v.volume, geraldist, true, cabinIsolation, totalLeak, openings, speedcar)
 										if getposdif >= 5.0 or poschanged then
 											poschanged = false
 											v.coords = cordsveh
@@ -658,13 +659,12 @@ function StartMusicLoop(i)
 										if not dina then
 											xSound:setSoundDynamic(v.name,true)
 										end
-										applyInteriorAudioProfile(v.name, v.volume, geraldist, false, cabinIsolation, totalLeak)
+											applyInteriorAudioProfile(v.name, v.volume, geraldist, false, cabinIsolation, totalLeak, openings, speedcar)
 										if geraldist >= v.range+20 then
 											sleep = (geraldist*100)/3
 										end
 										if sleep <= 10000 then
-											local speedcar = GetEntitySpeed(carro)*3.6
-											if speedcar <= 2.0 then
+												if speedcar <= 2.0 then
 												sleep = sleep+2500
 											elseif speedcar <= 5.0 then
 												sleep = sleep+1000
@@ -743,8 +743,12 @@ end
 
 function getVehicleAcousticData(vehicle)
 	if vehicle == 0 or not DoesEntityExist(vehicle) then
-		return 0.0, 0.0
+		return 0.0, 0.0, 0
 	end
+
+	local model = GetEntityModel(vehicle)
+	local seats = GetVehicleModelNumberOfSeats(model)
+	local maxWindowIndex = seats <= 2 and 1 or 3
 
 	local checkedDoors = 0
 	local openedDoors = 0
@@ -761,21 +765,22 @@ function getVehicleAcousticData(vehicle)
 
 	local checkedWindows = 0
 	local openWindows = 0
-	for window = 0, 3 do
+	for window = 0, maxWindowIndex do
 		checkedWindows = checkedWindows + 1
 		if not IsVehicleWindowIntact(vehicle, window) then
 			openWindows = openWindows + 1
 		end
 	end
 
+	local openings = openedDoors + openWindows
 	local windowLeak = checkedWindows > 0 and (openWindows / checkedWindows) or 0.0
 	local totalLeak = math.max(0.0, math.min(1.0, (doorLeak * 0.75) + (windowLeak * 0.45)))
 	local cabinIsolation = math.max(0.0, math.min(1.0, (1.0 - doorLeak) * (1.0 - (windowLeak * 0.60))))
 
-	return cabinIsolation, totalLeak
+	return cabinIsolation, totalLeak, openings
 end
 
-function applyInteriorAudioProfile(soundName, baseVolume, distanceToVehicle, inSameVehicle, cabinIsolation, totalLeak)
+function applyInteriorAudioProfile(soundName, baseVolume, distanceToVehicle, inSameVehicle, cabinIsolation, totalLeak, openings, vehicleSpeed)
 	if not xSound:soundExists(soundName) then
 		return
 	end
@@ -784,13 +789,22 @@ function applyInteriorAudioProfile(soundName, baseVolume, distanceToVehicle, inS
 	local targetVolume = baseVolume
 
 	if inSameVehicle then
-		local insidePresence = 0.94 + (0.08 * cabinIsolation)
+		local insidePresence = 0.94 + (0.08 * cabinIsolation) + math.min(0.04, totalLeak * 0.05)
 		targetVolume = math.min(1.0, baseVolume * insidePresence)
 	else
-		local closeFalloff = math.max(0.0, math.min(1.0, 1.0 - (distanceToVehicle / 42.0)))
-		local shellMuffle = 1.0 - (cabinIsolation * 0.88)
-		local leakBoost = 0.35 + (0.65 * totalLeak)
-		targetVolume = baseVolume * (0.12 + (0.58 * closeFalloff)) * shellMuffle * leakBoost
+		local closeFalloff = math.max(0.0, math.min(1.0, 1.0 - (distanceToVehicle / 45.0)))
+		local muffledBase = baseVolume * (0.10 + (0.42 * closeFalloff))
+		local openingBoost = 1.0
+		if openings >= 2 then
+			openingBoost = 1.75
+		elseif openings == 1 then
+			openingBoost = 1.50
+		end
+		local shellMuffle = math.max(0.08, 1.0 - (cabinIsolation * 0.92))
+		local leakPresence = 0.70 + (totalLeak * 0.65)
+		local motionPulse = 1.0 + (math.min(0.12, (vehicleSpeed or 0.0) / 260.0) * math.abs(math.sin(GetGameTimer() / 240.0)))
+		targetVolume = muffledBase * openingBoost * shellMuffle * leakPresence * motionPulse
+		targetVolume = math.min(baseVolume * 0.95, targetVolume)
 	end
 
 	if not profile.lastVolume or math.abs(profile.lastVolume - targetVolume) > 0.015 then
