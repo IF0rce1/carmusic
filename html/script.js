@@ -1,34 +1,43 @@
 let customRadios;
+const RESOURCE_NAME = (typeof GetParentResourceName === 'function' && GetParentResourceName()) || 'carmusic'
+const NUI_URL = `https://${RESOURCE_NAME}`
+const nuiPost = (route, payload = {}) => {
+  return fetch(`${NUI_URL}/${route}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json; charset=UTF-8' },
+    body: JSON.stringify(payload),
+  }).catch(() => null)
+}
 
 $('#volumeUp').click(function () {
-  $.post('https://carmusic/action', JSON.stringify({ action: 'volumeup' }))
+  nuiPost('action', { action: 'volumeup' })
 })
 
 $('#volumeDown').click(function () {
-  $.post('https://carmusic/action', JSON.stringify({ action: 'volumedown' }))
+  nuiPost('action', { action: 'volumedown' })
 })
 
 $('#loopButton').click(function () {
-  $.post('https://carmusic/action', JSON.stringify({ action: 'loop' }))
+  nuiPost('action', { action: 'loop' })
 })
 
 $('#stopButton').click(function () {
-  $.post('https://carmusic/action', JSON.stringify({ action: 'pause' }))
+  nuiPost('action', { action: 'pause' })
 })
 
 $('#prevButton').click(function () {
-  $.post('https://carmusic/action', JSON.stringify({ action: 'back' }))
+  nuiPost('action', { action: 'back' })
 })
 
 $('#nextButton').click(function () {
-  $.post('https://carmusic/action', JSON.stringify({ action: 'forward' }))
+  nuiPost('action', { action: 'forward' })
 })
 
 var vidname = 'Name not Found'
 $('#playButton').click(function () {
   if (customRadios && typeof customRadios.stop === 'function') customRadios.stop();
   var link = document.getElementById('youtubeLink').value
-  $.post('https://carmusic/action', JSON.stringify({ action: 'seturl', link: link }))
+  nuiPost('action', { action: 'seturl', link: link })
   getNameFile(link)
   document.getElementById('youtubeLink').value = ''
 })
@@ -129,7 +138,7 @@ $(document).ready(function () {
   $('#carmusic').hide()
   document.onkeyup = function (ev) {
     if (ev.which == 27) {
-      $.post('https://carmusic/action', JSON.stringify({ action: 'exit' }))
+      nuiPost('action', { action: 'exit' })
     }
   }
 })
@@ -186,7 +195,7 @@ Radio.prototype = {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-  fetch('https://carmusic/radio:ready', { method: 'POST', body: '{}' })
+  nuiPost('radio:ready', {})
 
   window.addEventListener('message', (event) => {
     let item = event.data
@@ -209,11 +218,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 $('#carmusicNowListen').fadeOut(500)
               }, 2000)
             })
-            $.post('https://carmusic/action', JSON.stringify({ action: 'pause' }))
+            nuiPost('action', { action: 'pause' })
             customRadios.play(index)
           }
         } else {
-          fetch('https://carmusic/radio:ready', { method: 'POST', body: '{}' })
+          nuiPost('radio:ready', {})
         }
         break
       case '_stopRadio':
@@ -226,6 +235,62 @@ document.addEventListener('DOMContentLoaded', () => {
 const carplayEngine = {
   sounds: {},
   listener: { x: 0, y: 0, z: 0, heading: 0 },
+  audioContext: null,
+}
+
+function getAudioContext() {
+  if (carplayEngine.audioContext) return carplayEngine.audioContext
+  const Ctx = window.AudioContext || window.webkitAudioContext
+  if (!Ctx) return null
+  carplayEngine.audioContext = new Ctx()
+  return carplayEngine.audioContext
+}
+
+function ensureFxChain(entry) {
+  if (entry.fxChainReady || !entry.howl) return
+  const sound = entry.howl._sounds && entry.howl._sounds[0]
+  if (!sound || !sound._node) return
+  const ctx = getAudioContext()
+  if (!ctx || !ctx.createMediaElementSource) return
+  try {
+    const source = ctx.createMediaElementSource(sound._node)
+    const low = ctx.createBiquadFilter()
+    low.type = 'lowshelf'
+    low.frequency.value = 180
+    low.gain.value = 0
+    const mid = ctx.createBiquadFilter()
+    mid.type = 'peaking'
+    mid.frequency.value = 1400
+    mid.Q.value = 0.9
+    mid.gain.value = 0
+    const high = ctx.createBiquadFilter()
+    high.type = 'highshelf'
+    high.frequency.value = 3800
+    high.gain.value = 0
+    const compressor = ctx.createDynamicsCompressor()
+    compressor.threshold.value = -20
+    compressor.ratio.value = 3
+    source.connect(low)
+    low.connect(mid)
+    mid.connect(high)
+    high.connect(compressor)
+    compressor.connect(ctx.destination)
+    entry.fx = { low, mid, high, compressor }
+    entry.fxChainReady = true
+  } catch (_) {
+    entry.fxChainReady = false
+  }
+}
+
+function applyFx(entry) {
+  ensureFxChain(entry)
+  if (!entry.fx) return
+  const fx = entry.fxPreset || {}
+  entry.fx.low.gain.value = fx.lowGain || 0
+  entry.fx.mid.gain.value = fx.midGain || 0
+  entry.fx.high.gain.value = fx.highGain || 0
+  entry.fx.compressor.threshold.value = fx.threshold || -20
+  entry.fx.compressor.ratio.value = fx.ratio || 3
 }
 
 function distance3(a, b) {
@@ -309,6 +374,7 @@ window.addEventListener('message', function (event) {
     entry.howl.loop(entry.loop)
     if (data.paused) entry.howl.pause()
     else if (!entry.howl.playing()) entry.howl.play()
+    applyFx(entry)
     return
   }
 
@@ -331,6 +397,10 @@ window.addEventListener('message', function (event) {
   if (data.cmd === 'setLoop') {
     snd.loop = !!data.value
     snd.howl.loop(snd.loop)
+  }
+  if (data.cmd === 'setFx') {
+    snd.fxPreset = data.value || {}
+    applyFx(snd)
   }
   if (data.cmd === 'seek' && typeof snd.howl.seek === 'function') snd.howl.seek(data.value || 0)
 })
