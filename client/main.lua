@@ -4,7 +4,44 @@ local vRP = Proxy.getInterface("vRP")
 Tunnel.bindInterface("xradio_music",Music)
 local datasoundinfo = {}
 local nuiaberto = false
-xSound = exports.xsound
+local rawXSound = exports.xsound
+local function safeXSoundCall(method, defaultValue, ...)
+	if not rawXSound or type(rawXSound[method]) ~= "function" then
+		return defaultValue
+	end
+
+	local ok, result = pcall(rawXSound[method], rawXSound, ...)
+	if not ok then
+		return defaultValue
+	end
+
+	return result
+end
+
+xSound = {
+	soundExists = function(self, name) return safeXSoundCall("soundExists", false, name) end,
+	isPaused = function(self, name) return safeXSoundCall("isPaused", false, name) end,
+	isPlaying = function(self, name) return safeXSoundCall("isPlaying", false, name) end,
+	getMaxDuration = function(self, name) return safeXSoundCall("getMaxDuration", 0.0, name) end,
+	getTimeStamp = function(self, name) return safeXSoundCall("getTimeStamp", 0.0, name) end,
+	getVolume = function(self, name) return safeXSoundCall("getVolume", 0.0, name) end,
+	Destroy = function(self, name) return safeXSoundCall("Destroy", false, name) end,
+	isLooped = function(self, name) return safeXSoundCall("isLooped", false, name) end,
+	getLink = function(self, name) return safeXSoundCall("getLink", nil, name) end,
+	isDynamic = function(self, name) return safeXSoundCall("isDynamic", false, name) end,
+	getPosition = function(self, name) return safeXSoundCall("getPosition", vector3(0.0, 0.0, 0.0), name) end,
+	setTimeStamp = function(self, name, value) return safeXSoundCall("setTimeStamp", false, name, value) end,
+	Distance = function(self, name, value) return safeXSoundCall("Distance", false, name, value) end,
+	setSoundDynamic = function(self, name, value) return safeXSoundCall("setSoundDynamic", false, name, value) end,
+	setVolume = function(self, name, value) return safeXSoundCall("setVolume", false, name, value) end,
+	setVolumeMax = function(self, name, value) return safeXSoundCall("setVolumeMax", false, name, value) end,
+	setSoundURL = function(self, name, url) return safeXSoundCall("setSoundURL", false, name, url) end,
+	Position = function(self, name, pos) return safeXSoundCall("Position", false, name, pos) end,
+	setSoundLoop = function(self, name, value) return safeXSoundCall("setSoundLoop", false, name, value) end,
+	PlayUrlPos = function(self, name, url, vol, coords, loop, options) return safeXSoundCall("PlayUrlPos", false, name, url, vol, coords, loop, options) end,
+	Resume = function(self, name) return safeXSoundCall("Resume", false, name) end,
+	Pause = function(self, name) return safeXSoundCall("Pause", false, name) end,
+}
 local myjob = nil
 local nomidaberto
 local SoundsPlaying = {}
@@ -1020,4 +1057,26 @@ Citizen.CreateThread(function()
             StopCustomRadios()
         end
     end
+end)
+
+Citizen.CreateThread(function()
+	while true do
+		Wait(200)
+		local ped = PlayerPedId()
+		if IsPedInAnyVehicle(ped, false) then
+			local veh = GetVehiclePedIsIn(ped, false)
+			local plate = GetVehicleNumberPlateText(veh)
+			local hasCarRadio = xSound:soundExists(plate)
+			if customSong or hasCarRadio then
+				SetVehRadioStation(veh, "OFF")
+				SetVehicleRadioEnabled(veh, false)
+				SetUserRadioControlEnabled(false)
+			else
+				SetVehicleRadioEnabled(veh, true)
+				SetUserRadioControlEnabled(true)
+			end
+		else
+			SetUserRadioControlEnabled(true)
+		end
+	end
 end)
