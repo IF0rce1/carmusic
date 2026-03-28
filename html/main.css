@@ -1,0 +1,23 @@
+@import "https://fonts.cdnfonts.com/css/akrobat";
+body { overflow: hidden; }
+#carmusic { position: absolute; color: #fff; top: 50vh; }
+#carmusic > h1 { position: relative; bottom: 15vh; left: 84.2vw; font-size: 1.5em; text-align: center; line-height: 0.5vh; font-family: 'Akrobat'; letter-spacing: 0.09em; }
+#carmusic > h1 > p { font-size: 1.1em; }
+#youtubeLink { position: absolute; bottom: 10vh; left: 82vw; width: 280px; text-align: center; height: 35px; outline: none; border: none; border-radius: 3vw; padding-left: 15px; padding-right: 15px; box-sizing: border-box; letter-spacing: 0.13em; font-weight: bold; font-family: 'Akrobat'; transition: .3s; }
+#youtubeLink:active { box-shadow: 0 0 50px #ffffff20; }
+#volumeButton, .volumeSet, #playButton, #stopButton, #loopButton, #prevButton, #nextButton { border-radius: 3vw; background-image: url('https://imgur.com/uBx6zIV.png'); background-size: 120%; background-position: 80% 10%; background-repeat: no-repeat; color: black; outline: none; border: none; text-align: center; margin-left: 5px; letter-spacing: 2px; font-family: 'Akrobat'; font-size: 15px; transition: .6s; filter: hue-rotate(150deg); }
+#volumeButton { position: absolute; top: 2vh; left: 81.8vw; width: 280px; height: 35px; font-weight: bold; }
+.volumeSet { position: absolute; top: 2vh; left: 81.8vw; width: 35px; height: 35px; font-weight: bold; }
+#volumeDown.volumeSet { left: calc(81.8vw - 10px - 35px); }
+#volumeUp.volumeSet { left: calc(81.8vw + 10px + 280px); }
+#playButton, #prevButton { position: absolute; left: 81vw; width: 150px; height: 35px; font-weight: bold; }
+#stopButton, #nextButton { position: absolute; left: 89.5vw; width: 150px; height: 35px; font-weight: bold; }
+#playButton, #stopButton { bottom: 5.5vh; }
+#prevButton, #nextButton { top: 11vh; }
+#loopButton { position: absolute; top: 6.5vh; left: 81.8vw; width: 280px; height: 35px; font-weight: bold; }
+#playButton:hover, #stopButton:hover, #loopButton:hover, #prevButton:hover, #nextButton:hover, .volumeSet:hover { background: #ffffff50; color: #fff; animation: animHover 1s infinite; }
+@keyframes animHover { 0% { box-shadow: 0 0 0 0px #ffffff50; } 100% { box-shadow: 0 0 0 10px rgba(13, 10, 200, 0); } }
+.carmusicListenMusic-Texts { position: absolute; top: 73%; left: 1.5%; }
+.carmusicListenMusic-Texts > h1 { color: #fff; font-family: 'Akrobat'; line-height: 0.9vh; font-size: 1.5em; margin-top: -4vh; margin-left: 3.7vw; letter-spacing: 0.05em; }
+.carmusicListenMusic-Texts > h1 > p { color: #fff; opacity: .6; font-family: 'Akrobat'; font-weight: 200; font-size: 0.7em; }
+.carmusicListenMusic-Texts > i { font-size: 1.5em; background: #4bddfe; color: black; padding: 1.3vh; width: 2.5vh; height: 2.5vh; border-radius: .5vh; }
