@@ -17,7 +17,6 @@ files {
 	'html/*.svg',
 	'html/radio.png',
 	'html/main.css',
-	'html/styles.css',
 }
 
 server_scripts {

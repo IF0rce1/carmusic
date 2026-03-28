@@ -4,148 +4,43 @@ local vRP = Proxy.getInterface("vRP")
 Tunnel.bindInterface("xradio_music",Music)
 local datasoundinfo = {}
 local nuiaberto = false
-local standaloneAudioState = {}
-local function nowMs()
-	return GetGameTimer()
-end
+local rawXSound = exports.xsound
+local function safeXSoundCall(method, defaultValue, ...)
+	if not rawXSound or type(rawXSound[method]) ~= "function" then
+		return defaultValue
+	end
 
-local function syncStandaloneSound(name)
-	local state = standaloneAudioState[name]
-	if not state then return end
-	SendNUIMessage({
-		action = "carplayAudio",
-		cmd = "upsert",
-		name = name,
-		url = state.url,
-		position = { x = state.pos.x, y = state.pos.y, z = state.pos.z },
-		volume = state.baseVolume,
-		maxVolume = state.maxVolume,
-		range = state.range,
-		loop = state.loop,
-		paused = state.paused,
-		dynamic = state.dynamic
-	})
+	local ok, result = pcall(rawXSound[method], rawXSound, ...)
+	if not ok then
+		return defaultValue
+	end
+
+	return result
 end
 
 xSound = {
-	soundExists = function(self, name) return standaloneAudioState[name] ~= nil end,
-	isPaused = function(self, name) return standaloneAudioState[name] and standaloneAudioState[name].paused or false end,
-	isPlaying = function(self, name) return standaloneAudioState[name] and not standaloneAudioState[name].paused or false end,
-	getMaxDuration = function(self, name) return 0.0 end,
-	getTimeStamp = function(self, name)
-		local state = standaloneAudioState[name]
-		if not state then return 0.0 end
-		if state.paused then return state.timestamp end
-		return state.timestamp + ((nowMs() - state.lastResumeMs) / 1000.0)
-	end,
-	getVolume = function(self, name) return standaloneAudioState[name] and standaloneAudioState[name].maxVolume or 0.0 end,
-	Destroy = function(self, name)
-		standaloneAudioState[name] = nil
-		SendNUIMessage({ action = "carplayAudio", cmd = "destroy", name = name })
-		return true
-	end,
-	isLooped = function(self, name) return standaloneAudioState[name] and standaloneAudioState[name].loop or false end,
-	getLink = function(self, name) return standaloneAudioState[name] and standaloneAudioState[name].url or nil end,
-	isDynamic = function(self, name) return standaloneAudioState[name] and standaloneAudioState[name].dynamic or false end,
-	getPosition = function(self, name) return standaloneAudioState[name] and standaloneAudioState[name].pos or vector3(0.0, 0.0, 0.0) end,
-	setTimeStamp = function(self, name, value)
-		local state = standaloneAudioState[name]
-		if not state then return false end
-		state.timestamp = value or 0.0
-		state.lastResumeMs = nowMs()
-		SendNUIMessage({ action = "carplayAudio", cmd = "seek", name = name, value = state.timestamp })
-		return true
-	end,
-	Distance = function(self, name, value)
-		local state = standaloneAudioState[name]
-		if not state then return false end
-		state.range = value
-		syncStandaloneSound(name)
-		return true
-	end,
-	setSoundDynamic = function(self, name, value)
-		local state = standaloneAudioState[name]
-		if not state then return false end
-		state.dynamic = value and true or false
-		syncStandaloneSound(name)
-		return true
-	end,
-	setVolume = function(self, name, value)
-		local state = standaloneAudioState[name]
-		if not state then return false end
-		state.baseVolume = value
-		state.maxVolume = value
-		SendNUIMessage({ action = "carplayAudio", cmd = "setVolume", name = name, value = value })
-		return true
-	end,
-	setVolumeMax = function(self, name, value)
-		local state = standaloneAudioState[name]
-		if not state then return false end
-		state.maxVolume = value
-		SendNUIMessage({ action = "carplayAudio", cmd = "setVolumeMax", name = name, value = value })
-		return true
-	end,
-	setSoundURL = function(self, name, url)
-		local state = standaloneAudioState[name]
-		if not state then return false end
-		state.url = url
-		state.timestamp = 0.0
-		state.lastResumeMs = nowMs()
-		SendNUIMessage({ action = "carplayAudio", cmd = "setUrl", name = name, url = url })
-		return true
-	end,
-	Position = function(self, name, pos)
-		local state = standaloneAudioState[name]
-		if not state then return false end
-		state.pos = pos
-		SendNUIMessage({ action = "carplayAudio", cmd = "setPosition", name = name, position = { x = pos.x, y = pos.y, z = pos.z } })
-		return true
-	end,
-	setSoundLoop = function(self, name, value)
-		local state = standaloneAudioState[name]
-		if not state then return false end
-		state.loop = value and true or false
-		SendNUIMessage({ action = "carplayAudio", cmd = "setLoop", name = name, value = state.loop })
-		return true
-	end,
-	PlayUrlPos = function(self, name, url, vol, coords, loop, options)
-		standaloneAudioState[name] = {
-			url = url,
-			pos = coords,
-			baseVolume = vol or 0.2,
-			maxVolume = vol or 0.2,
-			range = 35.0,
-			loop = loop and true or false,
-			paused = false,
-			dynamic = true,
-			timestamp = 0.0,
-			lastResumeMs = nowMs()
-		}
-		syncStandaloneSound(name)
-		if options and options.onPlayStart then
-			CreateThread(function()
-				Wait(25)
-				options.onPlayStart({})
-			end)
-		end
-		return true
-	end,
-	Resume = function(self, name)
-		local state = standaloneAudioState[name]
-		if not state then return false end
-		state.paused = false
-		state.lastResumeMs = nowMs()
-		SendNUIMessage({ action = "carplayAudio", cmd = "resume", name = name })
-		return true
-	end,
-	Pause = function(self, name)
-		local state = standaloneAudioState[name]
-		if not state then return false end
-		state.timestamp = state.timestamp + ((nowMs() - state.lastResumeMs) / 1000.0)
-		state.paused = true
-		SendNUIMessage({ action = "carplayAudio", cmd = "pause", name = name })
-		return true
-	end,
+	soundExists = function(self, name) return safeXSoundCall("soundExists", false, name) end,
+	isPaused = function(self, name) return safeXSoundCall("isPaused", false, name) end,
+	isPlaying = function(self, name) return safeXSoundCall("isPlaying", false, name) end,
+	getMaxDuration = function(self, name) return safeXSoundCall("getMaxDuration", 0.0, name) end,
+	getTimeStamp = function(self, name) return safeXSoundCall("getTimeStamp", 0.0, name) end,
+	getVolume = function(self, name) return safeXSoundCall("getVolume", 0.0, name) end,
+	Destroy = function(self, name) return safeXSoundCall("Destroy", false, name) end,
+	isLooped = function(self, name) return safeXSoundCall("isLooped", false, name) end,
+	getLink = function(self, name) return safeXSoundCall("getLink", nil, name) end,
+	isDynamic = function(self, name) return safeXSoundCall("isDynamic", false, name) end,
+	getPosition = function(self, name) return safeXSoundCall("getPosition", vector3(0.0, 0.0, 0.0), name) end,
+	setTimeStamp = function(self, name, value) return safeXSoundCall("setTimeStamp", false, name, value) end,
+	Distance = function(self, name, value) return safeXSoundCall("Distance", false, name, value) end,
+	setSoundDynamic = function(self, name, value) return safeXSoundCall("setSoundDynamic", false, name, value) end,
+	setVolume = function(self, name, value) return safeXSoundCall("setVolume", false, name, value) end,
+	setVolumeMax = function(self, name, value) return safeXSoundCall("setVolumeMax", false, name, value) end,
+	setSoundURL = function(self, name, url) return safeXSoundCall("setSoundURL", false, name, url) end,
+	Position = function(self, name, pos) return safeXSoundCall("Position", false, name, pos) end,
+	setSoundLoop = function(self, name, value) return safeXSoundCall("setSoundLoop", false, name, value) end,
+	PlayUrlPos = function(self, name, url, vol, coords, loop, options) return safeXSoundCall("PlayUrlPos", false, name, url, vol, coords, loop, options) end,
+	Resume = function(self, name) return safeXSoundCall("Resume", false, name) end,
+	Pause = function(self, name) return safeXSoundCall("Pause", false, name) end,
 }
 local myjob = nil
 local nomidaberto
@@ -196,10 +91,6 @@ local function addSoundLoop(index)
 		StartMusicLoop(index)
 	end
 end
---[[RegisterCommand("mota",function()
-	TriggerServerEvent("carmusic:ModifyURL",{})
-	TriggerServerEvent("carmusic:AddVehicle",{})
-end)]]
 
 RegisterNUICallback("action", function(data)
 	local _source = source
@@ -249,12 +140,7 @@ RegisterNUICallback("action", function(data)
 		end
 		if type(datasoundinfo.loop) ~= "table" then
 			local loop = ('Looping: '.. firstToUpper(tostring(datasoundinfo.loop)))
-			-- SendNUIMessage({
-			-- 	action = "changetextl",
-			-- 	text = loop,
-			-- })
 			vRP.notify({"Mod repeat: On"})
-			--TriggerEvent("nzv:notify", loop)
 		end
 	elseif data.action == "forward" then
 		if xSound:soundExists(nameid) then
@@ -411,12 +297,7 @@ function show(nomecenas)
 		local volume = ('Volume: '.. math.floor((datasoundinfo.volume*100) - 0.1+1).."%")
 		if type(datasoundinfo.loop) ~= "table" then
 			local loop = ('Looping: '.. firstToUpper(tostring(datasoundinfo.loop)))
-			-- SendNUIMessage({
-			-- 	action = "changetextl",
-			-- 	text = loop,
-			-- })
 			vRP.notify({"Mod repeat: Off"})
-			--TriggerEvent("nzv:notify", loop)
 		end
 		SendNUIMessage({
             action = "changetextv",
@@ -460,15 +341,12 @@ function show(nomecenas)
 			end
 		end
     elseif nuiaberto then
-		-- nomidaberto = nil
 		nuiaberto = false
         SetNuiFocus(false, false)
         SendNUIMessage({
             action = "hideRadio",
 			data = datasoundinfo
         })
-    
-		
 	end
 end
 
@@ -509,25 +387,11 @@ AddEventHandler("carmusic:AddVehicle", function(data)
 	xSound:PlayUrlPos(v.name, v.deflink, avancartodos, v.coords, v.loop,{
 		onPlayStart = function(event)
 			xSound:setTimeStamp(v.name, v.deftime)
-			xSound:Distance(v.name,v.range)
+			xSound:Distance(v.name, Config.MaxAudioDistance or 130.0)
 		end,
 	})
 	addSoundLoop(#Zones)
 end)
-
--- RegisterCommand("testSong",function()
--- 	TriggerEvent("carmusic:AddVehicle",{
--- 		name = "testMasa",
--- 		volume = 10.0,
--- 		deflink = "https://www.youtube.com/watch?v=tiUb_Gwvt60",
--- 		coords = GetEntityCoords(PlayerPedId()),
--- 		loop = true,
--- 		deftime = 0,
--- 		range = 10000.0,
--- 		popo = false,
--- 		isplaying = true
--- 	})
--- end)
 
 RegisterNetEvent("carmusic:ModifyURL")
 AddEventHandler("carmusic:ModifyURL", function(data)
@@ -554,12 +418,12 @@ AddEventHandler("carmusic:ModifyURL", function(data)
 		Wait(200)
 		xSound:setTimeStamp(v.name,0)
 		xSound:setVolumeMax(v.name,avancartodos)
-									 
+								 
 	else
 		xSound:PlayUrlPos(v.name, v.deflink, avancartodos, v.coords, v.loop, {
 			onPlayStart = function(event)
 				xSound:setTimeStamp(v.name, v.deftime)
-				xSound:Distance(v.name,v.range)
+				xSound:Distance(v.name, Config.MaxAudioDistance or 130.0)
 			end,
 		})
 	end
@@ -688,7 +552,8 @@ AddEventHandler("carmusic:ChangeVolume", function(som, range, nome)
         end
     end
 	if xSound:soundExists(nome) then
-		xSound:Distance(nome,range)
+		-- Do NOT call xSound:Distance here — the loop pins it to MaxAudioDistance.
+		-- We just let applyInteriorAudioProfile handle volume on next tick.
 		if not carroe and crds then
 			xSound:setVolumeMax(nome,som)
 		end
@@ -729,7 +594,7 @@ AddEventHandler("carmusic:SendData", function(data)
 			{
 				onPlayStart = function(event)
 					xSound:setTimeStamp(v.name, v.deftime)
-					xSound:Distance(v.name,v.range)
+					xSound:Distance(v.name, Config.MaxAudioDistance or 130.0)
 				end,
 				})
 				if v.popo then
@@ -757,235 +622,327 @@ function StartMusicLoop(i)
 	while not xSound:soundExists(Zones[i].name) do
 		Wait(10)
 	end
+
+	-- Immediately pin xSound's own distance cutoff to MaxAudioDistance so it
+	-- NEVER fires its built-in hard-stop. We do all attenuation ourselves.
+	local initName = Zones[i].name
+	local maxDist = (Config.MaxAudioDistance or 130.0)
+	xSound:Distance(initName, maxDist)
+
 	Citizen.CreateThread(function()
 		local poschanged = true
 		while true do
-			local sleep = 100
+			local sleep = 90
 			local v = Zones[i]
-			if v == nil then
-				return
-			end
+			if v == nil then return end
+
 			if v.isplaying and xSound:soundExists(v.name) then
 				local carrofound = false
-				if NetworkDoesEntityExistWithNetworkId(v.popo)then
+
+				if NetworkDoesEntityExistWithNetworkId(v.popo) then
 					local carro = NetworkGetEntityFromNetworkId(v.popo)
-					if DoesEntityExist(carro) then
-						if GetEntityType(carro) == 2 then
-							if GetVehicleNumberPlateText(carro) == v.name then
-									carrofound = true
-									local cordsveh = GetEntityCoords(carro)
-									local geraldist = #(cordsveh-coordsped)
-									local speedcar = GetEntitySpeed(carro)*3.6
-									local cabinIsolation, totalLeak, openings = getVehicleAcousticData(carro)
-									if geraldist <= v.range+50 then
-									local avolume = xSound:getVolume(v.name)
-									local dina = xSound:isDynamic(v.name)
-									local getpos = v.coords
-									local getposdif = #(getpos-cordsveh)
-									if avolume <= 0.001 then
-										sleep = 1000
-									end
-									if pploop == carro then
-										if dina then
-											xSound:setSoundDynamic(v.name,false)
-										end
-											applyInteriorAudioProfile(v.name, v.volume, geraldist, true, cabinIsolation, totalLeak, openings, speedcar, v.range)
-										if getposdif >= 5.0 or poschanged then
-											poschanged = false
-											v.coords = cordsveh
-											xSound:Position(v.name, cordsveh)
-										else
-											sleep = sleep+150
-										end
-									else	
-										if not dina then
-											xSound:setSoundDynamic(v.name,true)
-										end
-											applyInteriorAudioProfile(v.name, v.volume, geraldist, false, cabinIsolation, totalLeak, openings, speedcar, v.range)
-											if geraldist >= v.range+20 then
-												sleep = math.max(sleep, (geraldist*25)/3)
-											end
-											if sleep <= 1500 then
-												if speedcar <= 2.0 then
-													sleep = sleep+260
-												elseif speedcar <= 5.0 then
-													sleep = sleep+170
-												elseif speedcar <= 10.0 then
-													sleep = sleep+90
-												end
-											end
-										if getposdif >= 1.0 or poschanged then
-											poschanged = false
-											v.coords = cordsveh
-											xSound:Position(v.name, cordsveh)
-										else
-												sleep = sleep+90
-											end
-										end
-									else
-									if not xSound:isDynamic(v.name) then
-										xSound:setSoundDynamic(v.name,true)
-									end
-									xSound:setVolumeMax(v.name,0.0)
-									if not poschanged then
-										xSound:Position(v.name, vector3(350.0,0.0,-150.0))
-										poschanged = true
-									end
-										sleep = math.max(120, (geraldist*20)/2)
+					if DoesEntityExist(carro) and GetEntityType(carro) == 2
+					   and GetVehicleNumberPlateText(carro) == v.name then
+
+						carrofound = true
+						local cordsveh  = GetEntityCoords(carro)
+						local geraldist = #(cordsveh - coordsped)
+						local speedcar  = GetEntitySpeed(carro) * 3.6
+						local openFactor, numOpenings = getVehicleOpenFactor(carro)
+
+						-- Keep xSound's own distance fence well beyond our soft range
+						-- so it never interferes. Update it dynamically too.
+						local softMax = (Config.BaseRangeClosed or 18.0)
+						              + ((numOpenings or 0) * (Config.RangePerOpening or 16.0))
+						local xsoundFence = math.min(maxDist, softMax + 40.0)
+						xSound:Distance(v.name, xsoundFence)
+
+						local dina = xSound:isDynamic(v.name)
+
+						if pploop == carro then
+							-- ── Inside this vehicle ──────────────────────────────────
+							if dina then xSound:setSoundDynamic(v.name, false) end
+							applyInteriorAudioProfile(v.name, v.volume, geraldist, true, openFactor, numOpenings, speedcar)
+
+							local getposdif = #(v.coords - cordsveh)
+							if getposdif >= 5.0 or poschanged then
+								poschanged = false
+								v.coords = cordsveh
+								xSound:Position(v.name, cordsveh)
+							else
+								sleep = sleep + 150
+							end
+
+						elseif geraldist <= maxDist then
+							-- ── Outside, within absolute max distance ────────────────
+							if not dina then xSound:setSoundDynamic(v.name, true) end
+							applyInteriorAudioProfile(v.name, v.volume, geraldist, false, openFactor, numOpenings, speedcar)
+
+							-- Position update — less frequent when far away and slow
+							local getposdif = #(v.coords - cordsveh)
+							if getposdif >= 1.0 or poschanged then
+								poschanged = false
+								v.coords = cordsveh
+								xSound:Position(v.name, cordsveh)
+							else
+								sleep = sleep + 90
+							end
+
+							-- Stretch sleep when far and moving slowly (saves CPU)
+							if geraldist > softMax + 10 then
+								sleep = math.max(sleep, math.min(1200, geraldist * 12))
+							end
+							if sleep <= 1400 then
+								if speedcar <= 2.0 then sleep = sleep + 240
+								elseif speedcar <= 5.0 then sleep = sleep + 150
+								elseif speedcar <= 10.0 then sleep = sleep + 80
 								end
 							end
+
+						else
+							-- ── Beyond absolute max — silence without cutting position ──
+							-- We soft-zero volume here; applyInteriorAudioProfile will
+							-- smoothly bring it to 0 rather than snapping.
+							if not dina then xSound:setSoundDynamic(v.name, true) end
+							applyInteriorAudioProfile(v.name, v.volume, geraldist, false, openFactor, numOpenings, speedcar)
+							sleep = math.min(1400, math.max(200, geraldist * 10))
 						end
 					end
-					else
-						if xSound:soundExists(v.name) then
-							-- avoid interrupting playback on short network entity desync
-							xSound:setVolumeMax(v.name,0.0)
-								Wait(150)
-						end
+				else
+					-- Network entity missing — soft-zero, don't destroy
+					if xSound:soundExists(v.name) then
+						xSound:setVolumeMax(v.name, 0.0)
+						Wait(150)
 					end
+				end
+
 				if not carrofound and xSound:soundExists(v.name) then
 					if not xSound:isDynamic(v.name) then
-						xSound:setSoundDynamic(v.name,true)
+						xSound:setSoundDynamic(v.name, true)
 					end
-					--xSound:setVolumeMax(v.name,0.0)
 					if not poschanged then
-						xSound:Position(v.name, vector3(350.0,0.0,-150.0))
+						xSound:Position(v.name, vector3(350.0, 0.0, -150.0))
 						poschanged = true
 					end
-						Wait(450)
+					Wait(400)
 				end
+
 			else
+				-- Sound stopped / paused — clean up this loop
 				if xSound:soundExists(v.name) then
 					if not xSound:isDynamic(v.name) then
-						xSound:setSoundDynamic(v.name,true)
+						xSound:setSoundDynamic(v.name, true)
 					end
-					xSound:setVolumeMax(v.name,0.0)
+					xSound:setVolumeMax(v.name, 0.0)
 					if not poschanged then
-						xSound:Position(v.name, vector3(350.0,0.0,-150.0))
+						xSound:Position(v.name, vector3(350.0, 0.0, -150.0))
 						poschanged = true
 					end
 				end
 				v.isplaying = false
 				for j = 1, #SoundsPlaying do
-					local k = SoundsPlaying[j]
-					if k == i then
+					if SoundsPlaying[j] == i then
 						table.remove(SoundsPlaying, j)
+						break
 					end
 				end
 				break
 			end
-				if sleep > 1500 then
-					sleep = 1500
-				elseif sleep < 80 then
-					sleep = 80
-				end
+
+			sleep = math.max(80, math.min(1400, sleep))
 			Wait(sleep)
 		end
 	end)
 end
 
+-- ============================================================
+-- ACOUSTIC ENGINE v3
+--
+-- Design goals:
+--   1. ZERO hard cuts — volume always fades to 0 smoothly via
+--      exponential smoothing, never a snap.
+--   2. xSound's own Distance() is kept at MaxAudioDistance so
+--      xSound never fires its built-in cutoff. WE own attenuation.
+--   3. openFactor (0.0–1.0) is smoothed frame-to-frame so a
+--      door swinging open/closed sounds continuous.
+--   4. Range = BaseRangeClosed + numOpenings * RangePerOpening
+--      (fully configurable in config.lua).
+--   5. Muffle simulation: closed car → low volFactor AND
+--      an additional muffleFactor that pulls volume toward
+--      Config.MuffleFloor, giving a "bass thump through metal" feel.
+--      As car opens, muffle fades out → bright full sound.
+--   6. Exit fade uses cubic ease-in-out over Config.ExitFadeDuration.
+-- ============================================================
 
-function getVehicleAcousticData(vehicle)
+-- ----------------------------------------------------------------
+-- getVehicleOpenFactor(vehicle)
+-- Returns:
+--   openFactor  (float 0.0–1.0)  — how acoustically open the car is
+--   numOpenings (int)             — discrete count for range calc
+-- ----------------------------------------------------------------
+function getVehicleOpenFactor(vehicle)
 	if vehicle == 0 or not DoesEntityExist(vehicle) then
-		return 0.0, 0.0, 0
+		return 0.0, 0
 	end
 
-	local model = GetEntityModel(vehicle)
-	local seats = GetVehicleModelNumberOfSeats(model)
-	local maxWindowIndex = seats <= 2 and 1 or 3
+	local model  = GetEntityModel(vehicle)
+	local seats  = GetVehicleModelNumberOfSeats(model)
+	local maxWin = seats <= 2 and 1 or 3
 
-	local checkedDoors = 0
-	local openedDoors = 0
-	for door = 0, 5 do
-		if not IsVehicleDoorDamaged(vehicle, door) then
-			checkedDoors = checkedDoors + 1
-			if GetVehicleDoorAngleRatio(vehicle, door) > 0.05 then
-				openedDoors = openedDoors + 1
+	local totalWeight = 0.0
+	local totalLeak   = 0.0
+	local numOpenings = 0
+
+	-- Windows: weight 1.0, broken/missing = full leak
+	for w = 0, maxWin do
+		totalWeight = totalWeight + 1.0
+		if not IsVehicleWindowIntact(vehicle, w) then
+			totalLeak   = totalLeak + 1.0
+			numOpenings = numOpenings + 1
+		end
+	end
+
+	-- Doors: weight 2.0, use actual angle ratio for continuous response
+	-- curve: angle^0.72 so a door at 30% feels like ~25%, 50% feels ~44%
+	for d = 0, 5 do
+		if not IsVehicleDoorDamaged(vehicle, d) then
+			local angle = GetVehicleDoorAngleRatio(vehicle, d) -- 0→1
+			totalWeight = totalWeight + 2.0
+			if angle > 0.02 then
+				local doorLeak = math.pow(angle, 0.72)
+				totalLeak   = totalLeak + (doorLeak * 2.0)
+				-- Count as a discrete opening once it's meaningfully ajar
+				if angle > 0.08 then
+					numOpenings = numOpenings + 1
+				end
 			end
 		end
 	end
 
-	local doorLeak = checkedDoors > 0 and (openedDoors / checkedDoors) or 0.0
-
-	local checkedWindows = 0
-	local openWindows = 0
-	for window = 0, maxWindowIndex do
-		checkedWindows = checkedWindows + 1
-		if not IsVehicleWindowIntact(vehicle, window) then
-			openWindows = openWindows + 1
-		end
-	end
-
-	local openings = openedDoors + openWindows
-	local windowLeak = checkedWindows > 0 and (openWindows / checkedWindows) or 0.0
-	local totalLeak = math.max(0.0, math.min(1.0, (doorLeak * 0.75) + (windowLeak * 0.45)))
-	local cabinIsolation = math.max(0.0, math.min(1.0, (1.0 - doorLeak) * (1.0 - (windowLeak * 0.60))))
-
-	return cabinIsolation, totalLeak, openings
+	local openFactor = totalWeight > 0
+	                   and math.min(1.0, totalLeak / totalWeight)
+	                   or 0.0
+	return openFactor, math.min(4, numOpenings)
 end
 
-function applyInteriorAudioProfile(soundName, baseVolume, distanceToVehicle, inSameVehicle, cabinIsolation, totalLeak, openings, vehicleSpeed, hearingRange)
-	if not xSound:soundExists(soundName) then
-		return
-	end
+-- ----------------------------------------------------------------
+-- applyInteriorAudioProfile
+--
+-- soundName     : xSound sound id
+-- baseVolume    : the user-set volume (0-1)
+-- distToVehicle : metres between listener and car
+-- inSameVehicle : bool
+-- openFactor    : raw 0-1 from getVehicleOpenFactor
+-- numOpenings   : 0-4 discrete count for range calculation
+-- vehicleSpeed  : km/h
+-- ----------------------------------------------------------------
+function applyInteriorAudioProfile(soundName, baseVolume, distToVehicle, inSameVehicle, openFactor, numOpenings, vehicleSpeed)
+	if not xSound:soundExists(soundName) then return end
 
-	local profile = interiorSoundState[soundName] or {}
-	local targetVolume = baseVolume
+	local profile   = interiorSoundState[soundName] or {}
 	local currentMs = GetGameTimer()
-	local insideBaseVolume = math.min(baseVolume, baseVolume * 0.99)
+
+	-- ── 1. Smooth openFactor (door swing feels analog, not stepped) ──
+	local prevOpen  = profile.smoothedOpenFactor or openFactor
+	-- Opening is faster (door flies open), closing is slower (damped swing)
+	local oAlpha    = openFactor > prevOpen and 0.16 or 0.09
+	local smoothOpen = prevOpen + ((openFactor - prevOpen) * oAlpha)
+	profile.smoothedOpenFactor = smoothOpen
+
+	-- ── 2. Effective hearing range ────────────────────────────────────
+	local baseClosed  = Config.BaseRangeClosed  or 18.0
+	local perOpening  = Config.RangePerOpening  or 16.0
+	-- Range scales with discrete openings (so 1 door = more range than 0)
+	-- but we also interpolate within that via smoothOpen for sub-step smoothness
+	local discreteRange  = baseClosed + (numOpenings * perOpening)
+	local continuousRange = baseClosed + (smoothOpen * 4.0 * perOpening)
+	-- Blend: 70% discrete (snappy per door), 30% continuous (smooth within)
+	local effectiveRange = (discreteRange * 0.70) + (continuousRange * 0.30)
+	effectiveRange = math.max(8.0, effectiveRange)
+
+	-- ── 3. Compute target volume ──────────────────────────────────────
+	local targetVolume
 
 	if inSameVehicle then
-		local insidePresence = 0.97 + (0.03 * cabinIsolation)
-		targetVolume = math.min(baseVolume, baseVolume * insidePresence)
+		-- Inside: always full volume from the speakers.
+		-- Tiny +warmth when windows closed (cabin resonance).
+		local warmth = 1.0 - (smoothOpen * 0.035)
+		targetVolume = baseVolume * warmth
+
 	else
-		local openingFactor = 0.12
-		if openings == 1 then
-			openingFactor = 0.25
-		elseif openings == 2 then
-			openingFactor = 0.50
-		elseif openings == 3 then
-			openingFactor = 0.75
-		elseif openings >= 4 then
-			openingFactor = 1.0
-		end
+		local closedLeak = Config.ClosedLeakVolume or 0.07
+		local muffleFloor = Config.MuffleFloor     or 0.45
 
-		local maxRange = math.max(15.0, (hearingRange or 30.0) + 30.0)
-		local distanceFactor = math.max(0.0, 1.0 - (distanceToVehicle / maxRange))
-		distanceFactor = math.pow(distanceFactor, 1.35)
+		-- volFactor: from closedLeak when sealed → 1.0 when fully open
+		-- power curve so even a small opening causes a noticeable jump
+		-- (cracking a door lets sound escape immediately)
+		local volFactor = closedLeak + (smoothOpen * (1.0 - closedLeak))
+		volFactor = math.pow(volFactor, 0.60)   -- compress: opening matters early
 
-		local shellFactor = math.max(0.08, 1.0 - (cabinIsolation * 0.85))
-		local leakPresence = 0.70 + (totalLeak * 0.50)
-		local highCutEmulation = 1.0 - math.min(0.55, ((distanceToVehicle / maxRange) * 0.45) + (cabinIsolation * 0.15))
-		local motionPulse = 1.0 + (math.min(0.06, (vehicleSpeed or 0.0) / 320.0) * math.abs(math.sin(GetGameTimer() / 280.0)))
-		targetVolume = baseVolume * openingFactor * distanceFactor * shellFactor * leakPresence * highCutEmulation * motionPulse
+		-- Distance attenuation within effective range
+		-- Use a softer curve (exponent < 1) so attenuation starts gentle
+		-- and only becomes aggressive near the edge → no sudden cutoff feel
+		local distRatio = math.max(0.0, 1.0 - (distToVehicle / effectiveRange))
+		-- Blend two curves: linear falloff (harsh) vs sqrt (gentle)
+		-- → sqrt at close range, linear at far range
+		local distFactor = (math.pow(distRatio, 0.80) * 0.55)
+		                 + (distRatio * 0.45)
+		distFactor = math.max(0.0, distFactor)
+
+		-- Muffle simulation: low smoothOpen → pull volume toward muffleFloor
+		-- This simulates that only bass frequencies escape a closed car.
+		-- At smoothOpen 0.0 → muffleFactor = muffleFloor (heavy bass-only feel)
+		-- By smoothOpen 0.4 → muffleFactor = 1.0 (fully bright)
+		local muffleBlend  = math.max(0.0, 1.0 - (smoothOpen / 0.38))  -- linear 0→0.38
+		local muffleFactor = 1.0 - (muffleBlend * (1.0 - muffleFloor))
+
+		-- Speed shimmer: engine + exhaust carry sound in micro-pulses
+		local shimmer = 1.0 + (math.min(0.035, (vehicleSpeed or 0.0) / 450.0)
+		               * math.abs(math.sin(currentMs / 310.0)))
+
+		targetVolume = baseVolume * volFactor * distFactor * muffleFactor * shimmer
 		targetVolume = math.min(baseVolume, targetVolume)
 	end
 
+	-- ── 4. Entry / exit crossfade ─────────────────────────────────────
 	if profile.wasInside == nil then
 		profile.wasInside = inSameVehicle
 	end
 
 	if profile.wasInside and not inSameVehicle then
-		profile.exitTransitionUntil = currentMs + 1800
+		-- Stepped out: record exact volume at exit moment, crossfade out
+		profile.exitStartVol         = profile.smoothedVolume or baseVolume
+		profile.exitTransitionUntil  = currentMs + math.floor((Config.ExitFadeDuration or 2.8) * 1000)
 	elseif (not profile.wasInside) and inSameVehicle then
-		profile.enterTransitionUntil = currentMs + 800
+		-- Got in: quick snap to inside volume
+		profile.enterTransitionUntil = currentMs + 850
 	end
 	profile.wasInside = inSameVehicle
 
 	if profile.exitTransitionUntil and currentMs < profile.exitTransitionUntil then
-		local progress = 1.0 - ((profile.exitTransitionUntil - currentMs) / 1800.0)
-		targetVolume = insideBaseVolume + ((targetVolume - insideBaseVolume) * progress)
+		local fadeDur = (Config.ExitFadeDuration or 2.8) * 1000
+		local t = 1.0 - ((profile.exitTransitionUntil - currentMs) / fadeDur)
+		-- Cubic ease-in-out: slow start, fast middle, slow end
+		t = t * t * (3.0 - 2.0 * t)
+		local fromVol = profile.exitStartVol or baseVolume
+		targetVolume  = fromVol + ((targetVolume - fromVol) * t)
 	elseif profile.enterTransitionUntil and currentMs < profile.enterTransitionUntil then
-		local progress = 1.0 - ((profile.enterTransitionUntil - currentMs) / 800.0)
-		targetVolume = targetVolume + ((insideBaseVolume - targetVolume) * progress)
+		local t = 1.0 - ((profile.enterTransitionUntil - currentMs) / 850.0)
+		t = t * t * (3.0 - 2.0 * t)
+		local insideVol = baseVolume * 0.995
+		targetVolume = targetVolume + ((insideVol - targetVolume) * t)
 	end
 
+	-- ── 5. Exponential smoothing — eliminates ALL twitching ──────────
 	local smoothedVolume = profile.smoothedVolume or targetVolume
-	local alpha = inSameVehicle and 0.30 or 0.22
+	-- Inside: slightly faster (speakers are right there)
+	-- Outside: slower (acoustic space has natural inertia)
+	local alpha = inSameVehicle and 0.22 or 0.11
 	smoothedVolume = smoothedVolume + ((targetVolume - smoothedVolume) * alpha)
 	profile.smoothedVolume = smoothedVolume
 
-	if not profile.lastVolume or math.abs(profile.lastVolume - smoothedVolume) > 0.007 then
+	-- ── 6. Push update only when audibly different (>0.4%) ───────────
+	if not profile.lastVolume or math.abs(profile.lastVolume - smoothedVolume) > 0.004 then
 		if inSameVehicle then
 			xSound:setVolume(soundName, smoothedVolume)
 		else
@@ -1017,27 +974,27 @@ function DrawText3D(x, y, z, text,r,g,b,a)
 end
 
 local availableRadios = {
-    ["RADIO_01_CLASS_ROCK"] = true,              -- Los Santos Rock Radio
-    ["RADIO_02_POP"] = true,                     -- Non-Stop-Pop FM
-    ["RADIO_03_HIPHOP_NEW"] = true,              -- Radio Los Santos
-    ["RADIO_04_PUNK"] = true,                    -- Channel X
-    ["RADIO_05_TALK_01"] = true,                 -- West Coast Talk Radio
-    ["RADIO_06_COUNTRY"] = true,                 -- Rebel Radio
-    ["RADIO_07_DANCE_01"] = true,                -- Soulwax FM
-    ["RADIO_08_MEXICAN"] = true,                 -- East Los FM
-    ["RADIO_09_HIPHOP_OLD"] = true,              -- West Coast Classics
-    ["RADIO_12_REGGAE"] = true,                  -- Blue Ark
-    ["RADIO_13_JAZZ"] = true,                    -- Worldwide FM
-    ["RADIO_14_DANCE_02"] = true,                -- FlyLo FM
-    ["RADIO_15_MOTOWN"] = true,                  -- The Lowdown 91.1
-    ["RADIO_16_SILVERLAKE"] = true,              -- Radio Mirror Park
-    ["RADIO_17_FUNK"] = true,                    -- Space 103.2
-    ["RADIO_18_90S_ROCK"] = true,                -- Vinewood Boulevard Radio
-    ["RADIO_19_USER"] = true,                    -- Self Radio
-    ["RADIO_20_THELAB"] = true,                  -- The Lab
-    ["RADIO_11_TALK_02"] = true,                 -- Blaine County Radio
-    ["RADIO_21_DLC_XM17"] = true,                -- Blonded Los Santos 97.8 FM
-    ["RADIO_22_DLC_BATTLE_MIX1_RADIO"] = true    -- Los Santos Underground Radio
+    ["RADIO_01_CLASS_ROCK"] = true,
+    ["RADIO_02_POP"] = true,
+    ["RADIO_03_HIPHOP_NEW"] = true,
+    ["RADIO_04_PUNK"] = true,
+    ["RADIO_05_TALK_01"] = true,
+    ["RADIO_06_COUNTRY"] = true,
+    ["RADIO_07_DANCE_01"] = true,
+    ["RADIO_08_MEXICAN"] = true,
+    ["RADIO_09_HIPHOP_OLD"] = true,
+    ["RADIO_12_REGGAE"] = true,
+    ["RADIO_13_JAZZ"] = true,
+    ["RADIO_14_DANCE_02"] = true,
+    ["RADIO_15_MOTOWN"] = true,
+    ["RADIO_16_SILVERLAKE"] = true,
+    ["RADIO_17_FUNK"] = true,
+    ["RADIO_18_90S_ROCK"] = true,
+    ["RADIO_19_USER"] = true,
+    ["RADIO_20_THELAB"] = true,
+    ["RADIO_11_TALK_02"] = true,
+    ["RADIO_21_DLC_XM17"] = true,
+    ["RADIO_22_DLC_BATTLE_MIX1_RADIO"] = true
 }
 
 local customRadios = {}
@@ -1183,20 +1140,5 @@ Citizen.CreateThread(function()
 		else
 			SetUserRadioControlEnabled(true)
 		end
-	end
-end)
-
-Citizen.CreateThread(function()
-	while true do
-		Wait(80)
-		local ped = PlayerPedId()
-		local coords = GetEntityCoords(ped)
-		local heading = GetEntityHeading(ped)
-		SendNUIMessage({
-			action = "carplayAudio",
-			cmd = "listener",
-			position = { x = coords.x, y = coords.y, z = coords.z },
-			heading = heading
-		})
 	end
 end)
