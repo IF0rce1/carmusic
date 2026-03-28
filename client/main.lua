@@ -789,6 +789,8 @@ function applyInteriorAudioProfile(soundName, baseVolume, distanceToVehicle, inS
 
 	local profile = interiorSoundState[soundName] or {}
 	local targetVolume = baseVolume
+	local currentMs = GetGameTimer()
+	local insideBaseVolume = math.min(baseVolume, baseVolume * 0.99)
 
 	if inSameVehicle then
 		local insidePresence = 0.97 + (0.03 * cabinIsolation)
@@ -805,15 +807,35 @@ function applyInteriorAudioProfile(soundName, baseVolume, distanceToVehicle, inS
 			openingFactor = 1.0
 		end
 
-		local maxRange = math.max(10.0, (hearingRange or 30.0) + 15.0)
+		local maxRange = math.max(15.0, (hearingRange or 30.0) + 30.0)
 		local distanceFactor = math.max(0.0, 1.0 - (distanceToVehicle / maxRange))
-		distanceFactor = distanceFactor * distanceFactor
+		distanceFactor = math.pow(distanceFactor, 1.35)
 
 		local shellFactor = math.max(0.08, 1.0 - (cabinIsolation * 0.85))
 		local leakPresence = 0.70 + (totalLeak * 0.50)
+		local highCutEmulation = 1.0 - math.min(0.55, ((distanceToVehicle / maxRange) * 0.45) + (cabinIsolation * 0.15))
 		local motionPulse = 1.0 + (math.min(0.06, (vehicleSpeed or 0.0) / 320.0) * math.abs(math.sin(GetGameTimer() / 280.0)))
-		targetVolume = baseVolume * openingFactor * distanceFactor * shellFactor * leakPresence * motionPulse
+		targetVolume = baseVolume * openingFactor * distanceFactor * shellFactor * leakPresence * highCutEmulation * motionPulse
 		targetVolume = math.min(baseVolume, targetVolume)
+	end
+
+	if profile.wasInside == nil then
+		profile.wasInside = inSameVehicle
+	end
+
+	if profile.wasInside and not inSameVehicle then
+		profile.exitTransitionUntil = currentMs + 1800
+	elseif (not profile.wasInside) and inSameVehicle then
+		profile.enterTransitionUntil = currentMs + 800
+	end
+	profile.wasInside = inSameVehicle
+
+	if profile.exitTransitionUntil and currentMs < profile.exitTransitionUntil then
+		local progress = 1.0 - ((profile.exitTransitionUntil - currentMs) / 1800.0)
+		targetVolume = insideBaseVolume + ((targetVolume - insideBaseVolume) * progress)
+	elseif profile.enterTransitionUntil and currentMs < profile.enterTransitionUntil then
+		local progress = 1.0 - ((profile.enterTransitionUntil - currentMs) / 800.0)
+		targetVolume = targetVolume + ((insideBaseVolume - targetVolume) * progress)
 	end
 
 	local smoothedVolume = profile.smoothedVolume or targetVolume
