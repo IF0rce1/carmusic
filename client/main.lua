@@ -278,6 +278,17 @@ local function extractYouTubeVideoId(url)
 	return nil
 end
 
+local pendingYouTubeResolves = {}
+
+RegisterNetEvent("carmusic:ResolveYouTubeUrlResult")
+AddEventHandler("carmusic:ResolveYouTubeUrlResult", function(requestId, resolvedUrl)
+	local callback = pendingYouTubeResolves[requestId]
+	if callback then
+		pendingYouTubeResolves[requestId] = nil
+		callback(resolvedUrl)
+	end
+end)
+
 local function resolveYouTubeToPlayableUrl(url, callback)
 	local videoId = extractYouTubeVideoId(url)
 	if not videoId then
@@ -285,50 +296,17 @@ local function resolveYouTubeToPlayableUrl(url, callback)
 		return
 	end
 
-	local endpoints = Config.YouTubeResolverInstances or {
-		"https://piped.video",
-		"https://pipedapi.kavin.rocks"
-	}
-	local index = 1
+	local requestId = ("%s:%s:%s"):format(GetPlayerServerId(PlayerId()), GetGameTimer(), math.random(1000, 9999))
+	pendingYouTubeResolves[requestId] = callback
+	TriggerServerEvent("carmusic:ResolveYouTubeUrl", requestId, ("https://youtu.be/%s"):format(videoId))
 
-	local function tryNextEndpoint()
-		if index > #endpoints then
-			callback(nil)
-			return
+	SetTimeout(12000, function()
+		if pendingYouTubeResolves[requestId] then
+			local timeoutCb = pendingYouTubeResolves[requestId]
+			pendingYouTubeResolves[requestId] = nil
+			timeoutCb(nil)
 		end
-
-		local endpoint = endpoints[index]
-		index = index + 1
-		local requestUrl = ("%s/api/v1/streams/%s"):format(endpoint, videoId)
-
-		PerformHttpRequest(requestUrl, function(statusCode, body)
-			if statusCode >= 200 and statusCode < 300 and body then
-				local payload = json.decode(body)
-				if payload and payload.audioStreams then
-					local bestUrl = nil
-					local bestBitrate = -1
-					for _, stream in pairs(payload.audioStreams) do
-						if stream and stream.url then
-							local bitrate = tonumber(stream.bitrate) or 0
-							if bitrate > bestBitrate then
-								bestBitrate = bitrate
-								bestUrl = stream.url
-							end
-						end
-					end
-
-					if bestUrl then
-						callback(bestUrl)
-						return
-					end
-				end
-			end
-
-			tryNextEndpoint()
-		end, "GET", "", { ["Accept"] = "application/json" })
-	end
-
-	tryNextEndpoint()
+	end)
 end
 
 local function startSoundForLink(nameid, link)
