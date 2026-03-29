@@ -351,11 +351,11 @@ RegisterNUICallback("action", function(data)
 	if data.action == "seturl" then
 		if isYouTubeUrl(data.link) then
 			vRP.notify({"Detectat link YouTube, convertesc catre stream audio...","info"})
-			resolveYouTubeToPlayableUrl(data.link, function(resolvedUrl)
-				if not resolvedUrl then
-					vRP.notify({"Nu am putut extrage stream audio din YouTube. Incearca alt link sau alta instanta Piped in config.","error"})
-					return
-				end
+				resolveYouTubeToPlayableUrl(data.link, function(resolvedUrl)
+					if not resolvedUrl then
+						vRP.notify({"Nu am putut extrage stream audio din YouTube. Incearca alt link sau adauga alte instante resolver in config.","error"})
+						return
+					end
 				startSoundForLink(nameid, resolvedUrl)
 			end)
 			return

@@ -42,9 +42,64 @@ local function resolveYouTubeToAudioUrl(url, callback)
 
 	local endpoints = Config.YouTubeResolverInstances or {
 		"https://piped.video",
-		"https://pipedapi.kavin.rocks"
+		"https://pipedapi.kavin.rocks",
+		"https://inv.nadeko.net",
+		"https://invidious.privacyredirect.com"
 	}
 	local index = 1
+
+	local function chooseBestAudioUrl(list)
+		if type(list) ~= "table" then
+			return nil
+		end
+
+		local bestUrl = nil
+		local bestBitrate = -1
+		for _, stream in pairs(list) do
+			if stream and stream.url then
+				local bitrate = tonumber(stream.bitrate) or tonumber(stream.averageBitrate) or 0
+				local mimeType = tostring(stream.mimeType or stream.type or "")
+				if mimeType == "" or mimeType:lower():find("audio", 1, true) then
+					if bitrate > bestBitrate then
+						bestBitrate = bitrate
+						bestUrl = stream.url
+					end
+				end
+			end
+		end
+
+		return bestUrl
+	end
+
+	local function resolveFromPiped(endpoint, onDone)
+		local requestUrl = ("%s/api/v1/streams/%s"):format(endpoint, videoId)
+		PerformHttpRequest(requestUrl, function(statusCode, body)
+			if statusCode >= 200 and statusCode < 300 and body then
+				local payload = json.decode(body)
+				local bestUrl = payload and chooseBestAudioUrl(payload.audioStreams)
+				if bestUrl then
+					onDone(bestUrl)
+					return
+				end
+			end
+			onDone(nil)
+		end, "GET", "", { ["Accept"] = "application/json" })
+	end
+
+	local function resolveFromInvidious(endpoint, onDone)
+		local requestUrl = ("%s/api/v1/videos/%s"):format(endpoint, videoId)
+		PerformHttpRequest(requestUrl, function(statusCode, body)
+			if statusCode >= 200 and statusCode < 300 and body then
+				local payload = json.decode(body)
+				local bestUrl = payload and chooseBestAudioUrl(payload.adaptiveFormats)
+				if bestUrl then
+					onDone(bestUrl)
+					return
+				end
+			end
+			onDone(nil)
+		end, "GET", "", { ["Accept"] = "application/json" })
+	end
 
 	local function tryNextEndpoint()
 		if index > #endpoints then
@@ -54,32 +109,21 @@ local function resolveYouTubeToAudioUrl(url, callback)
 
 		local endpoint = endpoints[index]
 		index = index + 1
-		local requestUrl = ("%s/api/v1/streams/%s"):format(endpoint, videoId)
 
-		PerformHttpRequest(requestUrl, function(statusCode, body)
-			if statusCode >= 200 and statusCode < 300 and body then
-				local payload = json.decode(body)
-				if payload and payload.audioStreams then
-					local bestUrl = nil
-					local bestBitrate = -1
-					for _, stream in pairs(payload.audioStreams) do
-						if stream and stream.url then
-							local bitrate = tonumber(stream.bitrate) or 0
-							if bitrate > bestBitrate then
-								bestBitrate = bitrate
-								bestUrl = stream.url
-							end
-						end
-					end
-					if bestUrl then
-						callback(bestUrl)
-						return
-					end
-				end
+		resolveFromPiped(endpoint, function(urlFromPiped)
+			if urlFromPiped then
+				callback(urlFromPiped)
+				return
 			end
 
-			tryNextEndpoint()
-		end, "GET", "", { ["Accept"] = "application/json" })
+			resolveFromInvidious(endpoint, function(urlFromInvidious)
+				if urlFromInvidious then
+					callback(urlFromInvidious)
+					return
+				end
+				tryNextEndpoint()
+			end)
+		end)
 	end
 
 	tryNextEndpoint()

@@ -7,7 +7,9 @@ Config.ItemInVehicle = true
 Config.CommandVehicle = "carradio"
 Config.YouTubeResolverInstances = {
 	"https://piped.video",
-	"https://pipedapi.kavin.rocks"
+	"https://pipedapi.kavin.rocks",
+	"https://inv.nadeko.net",
+	"https://invidious.privacyredirect.com"
 }
 
 -- ── Acoustic / distance settings ─────────────────────────────────────────────
