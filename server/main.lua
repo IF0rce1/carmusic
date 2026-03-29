@@ -1,7 +1,106 @@
 
+local function isYouTubeUrl(url)
+	if type(url) ~= "string" then
+		return false
+	end
 
+	local normalized = url:lower()
+	return normalized:find("youtube%.com", 1, false) ~= nil
+		or normalized:find("youtu%.be", 1, false) ~= nil
+		or normalized:find("music%.youtube%.com", 1, false) ~= nil
+end
 
-local xSound = exports.xsound
+local function extractYouTubeVideoId(url)
+	if type(url) ~= "string" then
+		return nil
+	end
+
+	local fromWatch = url:match("[?&]v=([%w_-]+)")
+	if fromWatch then
+		return fromWatch
+	end
+
+	local fromShort = url:match("youtu%.be/([%w_-]+)")
+	if fromShort then
+		return fromShort
+	end
+
+	local fromEmbed = url:match("youtube%.com/embed/([%w_-]+)")
+	if fromEmbed then
+		return fromEmbed
+	end
+
+	return nil
+end
+
+local function resolveYouTubeToAudioUrl(url, callback)
+	local videoId = extractYouTubeVideoId(url)
+	if not videoId then
+		callback(nil)
+		return
+	end
+
+	local endpoints = Config.YouTubeResolverInstances or {
+		"https://piped.video",
+		"https://pipedapi.kavin.rocks"
+	}
+	local index = 1
+
+	local function tryNextEndpoint()
+		if index > #endpoints then
+			callback(nil)
+			return
+		end
+
+		local endpoint = endpoints[index]
+		index = index + 1
+		local requestUrl = ("%s/api/v1/streams/%s"):format(endpoint, videoId)
+
+		PerformHttpRequest(requestUrl, function(statusCode, body)
+			if statusCode >= 200 and statusCode < 300 and body then
+				local payload = json.decode(body)
+				if payload and payload.audioStreams then
+					local bestUrl = nil
+					local bestBitrate = -1
+					for _, stream in pairs(payload.audioStreams) do
+						if stream and stream.url then
+							local bitrate = tonumber(stream.bitrate) or 0
+							if bitrate > bestBitrate then
+								bestBitrate = bitrate
+								bestUrl = stream.url
+							end
+						end
+					end
+					if bestUrl then
+						callback(bestUrl)
+						return
+					end
+				end
+			end
+
+			tryNextEndpoint()
+		end, "GET", "", { ["Accept"] = "application/json" })
+	end
+
+	tryNextEndpoint()
+end
+
+RegisterNetEvent("carmusic:ResolveYouTubeUrl")
+AddEventHandler("carmusic:ResolveYouTubeUrl", function(requestId, url)
+	local src = source
+	if type(requestId) ~= "string" then
+		return
+	end
+
+	if not isYouTubeUrl(url) then
+		TriggerClientEvent("carmusic:ResolveYouTubeUrlResult", src, requestId, url)
+		return
+	end
+
+	resolveYouTubeToAudioUrl(url, function(resolvedUrl)
+		TriggerClientEvent("carmusic:ResolveYouTubeUrlResult", src, requestId, resolvedUrl)
+	end)
+end)
 
 RegisterNetEvent("carmusic:ChangeVolume")
 AddEventHandler("carmusic:ChangeVolume", function(vol, nome)
