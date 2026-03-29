@@ -2,9 +2,13 @@ Config = {}
 
 Config.DistanceToVolume = 10.5
 Config.DistanceToVolumeAuzit = 14.0
-Config.PlayToEveryone = true 
-Config.ItemInVehicle = true 
-Config.CommandVehicle = "carradio" 
+Config.PlayToEveryone = true
+Config.ItemInVehicle = true
+Config.CommandVehicle = "carradio"
+Config.YouTubeResolverInstances = {
+	"https://piped.video",
+	"https://pipedapi.kavin.rocks"
+}
 
 -- ── Acoustic / distance settings ─────────────────────────────────────────────
 

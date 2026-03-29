@@ -98,7 +98,7 @@ local function createSounitySound(name, url, volume, pos, loop, autoStart)
 	return soundState
 end
 
-xSound = {
+Soundity = {
 	soundExists = function(self, name)
 		local soundState = getSoundState(name)
 		return soundState ~= nil and soundState.identifier ~= nil
@@ -255,6 +255,91 @@ local function isYouTubeUrl(url)
 		or normalized:find("music%.youtube%.com", 1, false) ~= nil
 end
 
+local function extractYouTubeVideoId(url)
+	if type(url) ~= "string" then
+		return nil
+	end
+
+	local fromWatch = url:match("[?&]v=([%w_-]+)")
+	if fromWatch then
+		return fromWatch
+	end
+
+	local fromShort = url:match("youtu%.be/([%w_-]+)")
+	if fromShort then
+		return fromShort
+	end
+
+	local fromEmbed = url:match("youtube%.com/embed/([%w_-]+)")
+	if fromEmbed then
+		return fromEmbed
+	end
+
+	return nil
+end
+
+local function resolveYouTubeToPlayableUrl(url, callback)
+	local videoId = extractYouTubeVideoId(url)
+	if not videoId then
+		callback(nil)
+		return
+	end
+
+	local endpoints = Config.YouTubeResolverInstances or {
+		"https://piped.video",
+		"https://pipedapi.kavin.rocks"
+	}
+	local index = 1
+
+	local function tryNextEndpoint()
+		if index > #endpoints then
+			callback(nil)
+			return
+		end
+
+		local endpoint = endpoints[index]
+		index = index + 1
+		local requestUrl = ("%s/api/v1/streams/%s"):format(endpoint, videoId)
+
+		PerformHttpRequest(requestUrl, function(statusCode, body)
+			if statusCode >= 200 and statusCode < 300 and body then
+				local payload = json.decode(body)
+				if payload and payload.audioStreams then
+					local bestUrl = nil
+					local bestBitrate = -1
+					for _, stream in pairs(payload.audioStreams) do
+						if stream and stream.url then
+							local bitrate = tonumber(stream.bitrate) or 0
+							if bitrate > bestBitrate then
+								bestBitrate = bitrate
+								bestUrl = stream.url
+							end
+						end
+					end
+
+					if bestUrl then
+						callback(bestUrl)
+						return
+					end
+				end
+			end
+
+			tryNextEndpoint()
+		end, "GET", "", { ["Accept"] = "application/json" })
+	end
+
+	tryNextEndpoint()
+end
+
+local function startSoundForLink(nameid, link)
+	ApplySound(0.20,nameid,true)
+	SetUrl(link,nameid)
+	if Soundity:soundExists(nameid) and Soundity:isPaused(nameid) then
+		TriggerServerEvent("carmusic:ChangeState", true, nameid)
+	end
+	customSong = true
+end
+
 local function isSoundLoopTracked(index)
 	for i = 1, #SoundsPlaying do
 		if SoundsPlaying[i] == index then
@@ -287,25 +372,27 @@ RegisterNUICallback("action", function(data)
 	end
 	if data.action == "seturl" then
 		if isYouTubeUrl(data.link) then
-			vRP.notify({"Sounity nu poate reda direct link-uri YouTube. Foloseste un link audio direct (.mp3/.aac/.m3u8/stream).","error"})
+			vRP.notify({"Detectat link YouTube, convertesc catre stream audio...","info"})
+			resolveYouTubeToPlayableUrl(data.link, function(resolvedUrl)
+				if not resolvedUrl then
+					vRP.notify({"Nu am putut extrage stream audio din YouTube. Incearca alt link sau alta instanta Piped in config.","error"})
+					return
+				end
+				startSoundForLink(nameid, resolvedUrl)
+			end)
 			return
 		end
-		ApplySound(0.20,nameid,true)
-		SetUrl(data.link,nameid)
-		if xSound:soundExists(nameid) and xSound:isPaused(nameid) then
-			TriggerServerEvent("carmusic:ChangeState", true, nameid)
-		end
-		customSong = true
+		startSoundForLink(nameid, data.link)
 	elseif data.action == "numemelodie" then
 		vRP.notify({"Se reda acum: "..data.nume,"info"})
 	elseif data.action == "faauzit" then
 		ApplySound(0.9,nameid)
 	elseif data.action == "play" then
-		if xSound:soundExists(nameid) and xSound:isPaused(nameid) then
+		if Soundity:soundExists(nameid) and Soundity:isPaused(nameid) then
 			TriggerServerEvent("carmusic:ChangeState", true, nameid)
 		end
 	elseif data.action == "pause" then
-		if xSound:soundExists(nameid) and xSound:isPlaying(nameid) then
+		if Soundity:soundExists(nameid) and Soundity:isPlaying(nameid) then
 			TriggerServerEvent("carmusic:ChangeState", false, nameid)
 		end
 		customSong = false
@@ -316,8 +403,8 @@ RegisterNUICallback("action", function(data)
 	elseif data.action == "volumedown" then
 		ApplySound(-0.05,nameid)
 	elseif data.action == "loop" then
-		if xSound:soundExists(nameid) then
-			datasoundinfo.loop = not xSound:isLooped(nameid)
+		if Soundity:soundExists(nameid) then
+			datasoundinfo.loop = not Soundity:isLooped(nameid)
 			TriggerServerEvent("carmusic:ChangeLoop",nameid,datasoundinfo.loop)
 		else
 			datasoundinfo.loop = not datasoundinfo.loop
@@ -327,11 +414,11 @@ RegisterNUICallback("action", function(data)
 			vRP.notify({"Mod repeat: On"})
 		end
 	elseif data.action == "forward" then
-		if xSound:soundExists(nameid) then
+		if Soundity:soundExists(nameid) then
 			vRP.notify({"Seek momentan indisponibil pe Sounity (stream live-safe).","warning"})
 		end
 	elseif data.action == "back" then
-		if xSound:soundExists(nameid) then
+		if Soundity:soundExists(nameid) then
 			vRP.notify({"Seek momentan indisponibil pe Sounity (stream live-safe).","warning"})
 		end
 	end
@@ -340,9 +427,9 @@ end)
 function ApplySound(quanti,plate,set)
 	local exis = false
 	local som = datasoundinfo.volume
-	if xSound:soundExists(plate) and xSound:isPlaying(plate) then
+	if Soundity:soundExists(plate) and Soundity:isPlaying(plate) then
 		exis = true
-		som = xSound:getVolume(plate)
+		som = Soundity:getVolume(plate)
 		datasoundinfo.volume = som
 	end
 	local vadi = math.max(-0.001, math.min(0.99, (set and quanti or som + quanti)))
@@ -401,27 +488,27 @@ function SetUrl(url,nid,sync)
 			end
 		end
 	else
-	
+
 	end
 	SendNUIMessage({
 		action = "TimeVid",
 	})
-	if xSound:soundExists(nome) then
+	if Soundity:soundExists(nome) then
 		SendNUIMessage({
 			action = "TimeVid",
-			total = xSound:getMaxDuration(nome),
-			played = xSound:getTimeStamp(nome),
+			total = Soundity:getMaxDuration(nome),
+			played = Soundity:getTimeStamp(nome),
 		})
 	end
 	local esperar = 0
 	while nuiaberto do
 		Wait(1000)
-		if xSound:soundExists(nome) then
-			if xSound:isPlaying(nome) then
+		if Soundity:soundExists(nome) then
+			if Soundity:isPlaying(nome) then
 				SendNUIMessage({
 					action = "TimeVid",
-					total = xSound:getMaxDuration(nome),
-					played = xSound:getTimeStamp(nome),
+					total = Soundity:getMaxDuration(nome),
+					played = Soundity:getTimeStamp(nome),
 				})
 			else
 				esperar = esperar +1
@@ -470,11 +557,11 @@ function show(nomecenas)
 		nuiaberto = true
 		datasoundinfo = {volume = 0.2, loop = false}
 		local linkurl
-		if xSound:soundExists(nome) then
-			datasoundinfo.volume = xSound:getVolume(nome)
-			datasoundinfo.loop = xSound:isLooped(nome)
-			if xSound:isPlaying(nome) then
-				linkurl = xSound:getLink(nome)
+		if Soundity:soundExists(nome) then
+			datasoundinfo.volume = Soundity:getVolume(nome)
+			datasoundinfo.loop = Soundity:isLooped(nome)
+			if Soundity:isPlaying(nome) then
+				linkurl = Soundity:getLink(nome)
 			end
 		end
         SetNuiFocus(true, true)
@@ -497,22 +584,22 @@ function show(nomecenas)
 		SendNUIMessage({
 			action = "TimeVid",
 		})
-		if xSound:soundExists(nome) then
+		if Soundity:soundExists(nome) then
 			SendNUIMessage({
 				action = "TimeVid",
-				total = xSound:getMaxDuration(nome),
-				played = xSound:getTimeStamp(nome),
+				total = Soundity:getMaxDuration(nome),
+				played = Soundity:getTimeStamp(nome),
 			})
 		end
 		local esperar = 0
 		while nuiaberto do
 			Wait(1000)
-			if xSound:soundExists(nome) then
-				if xSound:isPlaying(nome) then
+			if Soundity:soundExists(nome) then
+				if Soundity:isPlaying(nome) then
 					SendNUIMessage({
 						action = "TimeVid",
-						total = xSound:getMaxDuration(nome),
-						played = xSound:getTimeStamp(nome),
+						total = Soundity:getMaxDuration(nome),
+						played = Soundity:getTimeStamp(nome),
 					})
 				else
 					esperar = esperar +1
@@ -540,8 +627,8 @@ RegisterNetEvent("carmusic:AddVehicle")
 AddEventHandler("carmusic:AddVehicle", function(data)
 	table.insert(Zones, data)
 	local v = data
-	if xSound:soundExists(v.name) then
-		xSound:Destroy(v.name)
+	if Soundity:soundExists(v.name) then
+		Soundity:Destroy(v.name)
 	end
 	local avancartodos = v.volume
 	if not Config.PlayToEveryone and v.popo then
@@ -556,22 +643,22 @@ AddEventHandler("carmusic:AddVehicle", function(data)
 	local ped_veh = GetVehiclePedIsIn(PlayerPedId())
 	if networked_veh ~= 0 and ped_veh == networked_veh then
 		CreateThread(function()
-			while (xSound:soundExists(v.name) and DoesEntityExist(networked_veh)) do Wait(512)
+			while (Soundity:soundExists(v.name) and DoesEntityExist(networked_veh)) do Wait(512)
 				local ped = PlayerPedId()
 				local coords = GetEntityCoords(ped)
 				local veh_coords = GetEntityCoords(networked_veh)
 				if #(coords - veh_coords) >= 30 then
-					if xSound:soundExists(v.name) then
-						xSound:Destroy(v.name)
+					if Soundity:soundExists(v.name) then
+						Soundity:Destroy(v.name)
 					end
 				end
 			end
 		end)
 	end
-	xSound:PlayUrlPos(v.name, v.deflink, avancartodos, v.coords, v.loop,{
+	Soundity:PlayUrlPos(v.name, v.deflink, avancartodos, v.coords, v.loop,{
 		onPlayStart = function(event)
-			xSound:setTimeStamp(v.name, v.deftime)
-			xSound:Distance(v.name, Config.MaxAudioDistance or 130.0)
+			Soundity:setTimeStamp(v.name, v.deftime)
+			Soundity:Distance(v.name, Config.MaxAudioDistance or 130.0)
 		end,
 	})
 	addSoundLoop(#Zones)
@@ -589,25 +676,25 @@ AddEventHandler("carmusic:ModifyURL", function(data)
 			avancartodos = v.volume
 		end
 	end
-	if xSound:soundExists(v.name) then
-		if not xSound:isDynamic(v.name) then
-			xSound:setSoundDynamic(v.name,true)
+	if Soundity:soundExists(v.name) then
+		if not Soundity:isDynamic(v.name) then
+			Soundity:setSoundDynamic(v.name,true)
 		end
 		Wait(100)
-		xSound:setVolumeMax(v.name,0.0)
-		xSound:setSoundURL(v.name, v.deflink)
+		Soundity:setVolumeMax(v.name,0.0)
+		Soundity:setSoundURL(v.name, v.deflink)
 		Wait(100)
-		xSound:Position(v.name, v.coords)
-		xSound:setSoundLoop(v.name,v.loop)
+		Soundity:Position(v.name, v.coords)
+		Soundity:setSoundLoop(v.name,v.loop)
 		Wait(200)
-		xSound:setTimeStamp(v.name,0)
-		xSound:setVolumeMax(v.name,avancartodos)
-								 
+		Soundity:setTimeStamp(v.name,0)
+		Soundity:setVolumeMax(v.name,avancartodos)
+
 	else
-		xSound:PlayUrlPos(v.name, v.deflink, avancartodos, v.coords, v.loop, {
+		Soundity:PlayUrlPos(v.name, v.deflink, avancartodos, v.coords, v.loop, {
 			onPlayStart = function(event)
-				xSound:setTimeStamp(v.name, v.deftime)
-				xSound:Distance(v.name, Config.MaxAudioDistance or 130.0)
+				Soundity:setTimeStamp(v.name, v.deftime)
+				Soundity:Distance(v.name, Config.MaxAudioDistance or 130.0)
 			end,
 		})
 	end
@@ -637,15 +724,15 @@ AddEventHandler("carmusic:ModifyURL", function(data)
 	local esperar = 0
 	while nuiaberto do
 		Wait(1000)
-		if xSound:soundExists(v.name) then
+		if Soundity:soundExists(v.name) then
 			local pped = PlayerPedId()
 			local coordss = GetEntityCoords(pped)
-			local geraldist = #(coordss-xSound:getPosition(v.name))
-			if xSound:isPlaying(v.name) and (geraldist <= 3 or not v.popo) then
+			local geraldist = #(coordss-Soundity:getPosition(v.name))
+			if Soundity:isPlaying(v.name) and (geraldist <= 3 or not v.popo) then
 				SendNUIMessage({
 					action = "TimeVid",
-					total = xSound:getMaxDuration(v.name),
-					played = xSound:getTimeStamp(v.name),
+					total = Soundity:getMaxDuration(v.name),
+					played = Soundity:getTimeStamp(v.name),
 				})
 			else
 				esperar = esperar +1
@@ -664,10 +751,10 @@ end)
 
 RegisterNetEvent("carmusic:ChangeState")
 AddEventHandler("carmusic:ChangeState", function(tipo, nome)
-	if tipo and xSound:soundExists(nome) then
-		xSound:Resume(nome)
-	elseif xSound:soundExists(nome) then
-		xSound:Pause(nome)
+	if tipo and Soundity:soundExists(nome) then
+		Soundity:Resume(nome)
+	elseif Soundity:soundExists(nome) then
+		Soundity:Pause(nome)
 	end
 	local iss = nil
 	for i = 1, #Zones do
@@ -704,15 +791,15 @@ AddEventHandler("carmusic:ChangePosition", function(quanti, nome)
 			tempapply = v.deftime
 		end
 	end
-	if xSound:soundExists(nome) then
-		xSound:setTimeStamp(nome,tempapply)
+	if Soundity:soundExists(nome) then
+		Soundity:setTimeStamp(nome,tempapply)
 	end
 end)
 
 RegisterNetEvent("carmusic:ChangeLoop")
 AddEventHandler("carmusic:ChangeLoop", function(tipo, nome)
-	if xSound:soundExists(nome) then
-		xSound:setSoundLoop(nome,tipo)
+	if Soundity:soundExists(nome) then
+		Soundity:setSoundLoop(nome,tipo)
 	end
 	for i = 1, #Zones do
 		local v = Zones[i]
@@ -735,11 +822,11 @@ AddEventHandler("carmusic:ChangeVolume", function(som, range, nome)
 			crds = v.coords
         end
     end
-	if xSound:soundExists(nome) then
-		-- Do NOT call xSound:Distance here — the loop pins it to MaxAudioDistance.
+	if Soundity:soundExists(nome) then
+		-- Do NOT call Soundity:Distance here — the loop pins it to MaxAudioDistance.
 		-- We just let applyInteriorAudioProfile handle volume on next tick.
 		if not carroe and crds then
-			xSound:setVolumeMax(nome,som)
+			Soundity:setVolumeMax(nome,som)
 		end
 	end
 end)
@@ -762,8 +849,8 @@ AddEventHandler("carmusic:SendData", function(data)
     for i = 1, #Zones do
 		local v = Zones[i]
 		if v.isplaying then
-			if xSound:soundExists(v.name) then
-				xSound:Destroy(v.name)
+			if Soundity:soundExists(v.name) then
+				Soundity:Destroy(v.name)
 			end
 			local avancartodos = v.volume
 			if not Config.PlayToEveryone and v.popo then
@@ -774,11 +861,11 @@ AddEventHandler("carmusic:SendData", function(data)
 					avancartodos = v.volume
 				end
 			end
-			xSound:PlayUrlPos(v.name, v.deflink, avancartodos, v.coords, v.loop,
+			Soundity:PlayUrlPos(v.name, v.deflink, avancartodos, v.coords, v.loop,
 			{
 				onPlayStart = function(event)
-					xSound:setTimeStamp(v.name, v.deftime)
-					xSound:Distance(v.name, Config.MaxAudioDistance or 130.0)
+					Soundity:setTimeStamp(v.name, v.deftime)
+					Soundity:Distance(v.name, Config.MaxAudioDistance or 130.0)
 				end,
 				})
 				if v.popo then
@@ -803,15 +890,15 @@ Citizen.CreateThread(function()
 end)
 
 function StartMusicLoop(i)
-	while not xSound:soundExists(Zones[i].name) do
+	while not Soundity:soundExists(Zones[i].name) do
 		Wait(10)
 	end
 
-	-- Immediately pin xSound's own distance cutoff to MaxAudioDistance so it
+	-- Immediately pin Soundity's own distance cutoff to MaxAudioDistance so it
 	-- NEVER fires its built-in hard-stop. We do all attenuation ourselves.
 	local initName = Zones[i].name
 	local maxDist = (Config.MaxAudioDistance or 130.0)
-	xSound:Distance(initName, maxDist)
+	Soundity:Distance(initName, maxDist)
 
 	Citizen.CreateThread(function()
 		local poschanged = true
@@ -820,7 +907,7 @@ function StartMusicLoop(i)
 			local v = Zones[i]
 			if v == nil then return end
 
-			if v.isplaying and xSound:soundExists(v.name) then
+			if v.isplaying and Soundity:soundExists(v.name) then
 				local carrofound = false
 
 				if NetworkDoesEntityExistWithNetworkId(v.popo) then
@@ -829,38 +916,38 @@ function StartMusicLoop(i)
 					   and GetVehicleNumberPlateText(carro) == v.name then
 
 						carrofound = true
-						xSound:setAttachedEntity(v.name, v.popo)
+						Soundity:setAttachedEntity(v.name, v.popo)
 						local cordsveh  = GetEntityCoords(carro)
 						local geraldist = #(cordsveh - coordsped)
 						local speedcar  = GetEntitySpeed(carro) * 3.6
 						local openFactor, numOpenings = getVehicleOpenFactor(carro)
 
-						-- Keep xSound's own distance fence well beyond our soft range
+						-- Keep Soundity's own distance fence well beyond our soft range
 						-- so it never interferes. Update it dynamically too.
 						local softMax = (Config.BaseRangeClosed or 18.0)
 						              + ((numOpenings or 0) * (Config.RangePerOpening or 16.0))
-						local xsoundFence = math.min(maxDist, softMax + 40.0)
-						xSound:Distance(v.name, xsoundFence)
+						local soundityFence = math.min(maxDist, softMax + 40.0)
+						Soundity:Distance(v.name, soundityFence)
 
-						local dina = xSound:isDynamic(v.name)
+						local dina = Soundity:isDynamic(v.name)
 
 						if pploop == carro then
 							-- ── Inside this vehicle ──────────────────────────────────
-							if dina then xSound:setSoundDynamic(v.name, false) end
+							if dina then Soundity:setSoundDynamic(v.name, false) end
 							applyInteriorAudioProfile(v.name, v.volume, geraldist, true, openFactor, numOpenings, speedcar)
 
 							local getposdif = #(v.coords - cordsveh)
 							if getposdif >= 5.0 or poschanged then
 								poschanged = false
 								v.coords = cordsveh
-								xSound:Position(v.name, cordsveh)
+								Soundity:Position(v.name, cordsveh)
 							else
 								sleep = sleep + 150
 							end
 
 						elseif geraldist <= maxDist then
 							-- ── Outside, within absolute max distance ────────────────
-							if not dina then xSound:setSoundDynamic(v.name, true) end
+							if not dina then Soundity:setSoundDynamic(v.name, true) end
 							applyInteriorAudioProfile(v.name, v.volume, geraldist, false, openFactor, numOpenings, speedcar)
 
 							-- Position update — less frequent when far away and slow
@@ -868,7 +955,7 @@ function StartMusicLoop(i)
 							if getposdif >= 1.0 or poschanged then
 								poschanged = false
 								v.coords = cordsveh
-								xSound:Position(v.name, cordsveh)
+								Soundity:Position(v.name, cordsveh)
 							else
 								sleep = sleep + 90
 							end
@@ -888,25 +975,25 @@ function StartMusicLoop(i)
 							-- ── Beyond absolute max — silence without cutting position ──
 							-- We soft-zero volume here; applyInteriorAudioProfile will
 							-- smoothly bring it to 0 rather than snapping.
-							if not dina then xSound:setSoundDynamic(v.name, true) end
+							if not dina then Soundity:setSoundDynamic(v.name, true) end
 							applyInteriorAudioProfile(v.name, v.volume, geraldist, false, openFactor, numOpenings, speedcar)
 							sleep = math.min(1400, math.max(200, geraldist * 10))
 						end
 					end
 				else
 					-- Network entity missing — soft-zero, don't destroy
-					if xSound:soundExists(v.name) then
-						xSound:setVolumeMax(v.name, 0.0)
+					if Soundity:soundExists(v.name) then
+						Soundity:setVolumeMax(v.name, 0.0)
 						Wait(150)
 					end
 				end
 
-				if not carrofound and xSound:soundExists(v.name) then
-					if not xSound:isDynamic(v.name) then
-						xSound:setSoundDynamic(v.name, true)
+				if not carrofound and Soundity:soundExists(v.name) then
+					if not Soundity:isDynamic(v.name) then
+						Soundity:setSoundDynamic(v.name, true)
 					end
 					if not poschanged then
-						xSound:Position(v.name, vector3(350.0, 0.0, -150.0))
+						Soundity:Position(v.name, vector3(350.0, 0.0, -150.0))
 						poschanged = true
 					end
 					Wait(400)
@@ -914,13 +1001,13 @@ function StartMusicLoop(i)
 
 			else
 				-- Sound stopped / paused — clean up this loop
-				if xSound:soundExists(v.name) then
-					if not xSound:isDynamic(v.name) then
-						xSound:setSoundDynamic(v.name, true)
+				if Soundity:soundExists(v.name) then
+					if not Soundity:isDynamic(v.name) then
+						Soundity:setSoundDynamic(v.name, true)
 					end
-					xSound:setVolumeMax(v.name, 0.0)
+					Soundity:setVolumeMax(v.name, 0.0)
 					if not poschanged then
-						xSound:Position(v.name, vector3(350.0, 0.0, -150.0))
+						Soundity:Position(v.name, vector3(350.0, 0.0, -150.0))
 						poschanged = true
 					end
 				end
@@ -946,8 +1033,8 @@ end
 -- Design goals:
 --   1. ZERO hard cuts — volume always fades to 0 smoothly via
 --      exponential smoothing, never a snap.
---   2. xSound's own Distance() is kept at MaxAudioDistance so
---      xSound never fires its built-in cutoff. WE own attenuation.
+--   2. Soundity's own Distance() is kept at MaxAudioDistance so
+--      Soundity never fires its built-in cutoff. WE own attenuation.
 --   3. openFactor (0.0–1.0) is smoothed frame-to-frame so a
 --      door swinging open/closed sounds continuous.
 --   4. Range = BaseRangeClosed + numOpenings * RangePerOpening
@@ -1013,7 +1100,7 @@ end
 -- ----------------------------------------------------------------
 -- applyInteriorAudioProfile
 --
--- soundName     : xSound sound id
+-- soundName     : Soundity sound id
 -- baseVolume    : the user-set volume (0-1)
 -- distToVehicle : metres between listener and car
 -- inSameVehicle : bool
@@ -1022,7 +1109,7 @@ end
 -- vehicleSpeed  : km/h
 -- ----------------------------------------------------------------
 function applyInteriorAudioProfile(soundName, baseVolume, distToVehicle, inSameVehicle, openFactor, numOpenings, vehicleSpeed)
-	if not xSound:soundExists(soundName) then return end
+	if not Soundity:soundExists(soundName) then return end
 
 	local profile   = interiorSoundState[soundName] or {}
 	local currentMs = GetGameTimer()
@@ -1129,9 +1216,9 @@ function applyInteriorAudioProfile(soundName, baseVolume, distToVehicle, inSameV
 	-- ── 6. Push update only when audibly different (>0.4%) ───────────
 	if not profile.lastVolume or math.abs(profile.lastVolume - smoothedVolume) > 0.004 then
 		if inSameVehicle then
-			xSound:setVolume(soundName, smoothedVolume)
+			Soundity:setVolume(soundName, smoothedVolume)
 		else
-			xSound:setVolumeMax(soundName, smoothedVolume)
+			Soundity:setVolumeMax(soundName, smoothedVolume)
 		end
 		profile.lastVolume = smoothedVolume
 	end
@@ -1209,10 +1296,10 @@ end
 
 RegisterNuiCallbackType("radio:ready")
 AddEventHandler("__cfx_nui:radio:ready", function(data,cb)
-    SendNuiMessage(json.encode({ 
-        type = "_createRadio", 
+    SendNuiMessage(json.encode({
+        type = "_createRadio",
         radios = customRadios,
-        volume = volume 
+        volume = volume
     }))
     previousVolume = -1
     print("radio - nui Ready")
@@ -1221,7 +1308,7 @@ end)
 SendNuiMessage(json.encode({
      type = "_createRadio",
     radios = customRadios,
-    volume = volume 
+    volume = volume
 }))
 print("radio - nui Ready 2")
 
@@ -1313,7 +1400,7 @@ Citizen.CreateThread(function()
 		if IsPedInAnyVehicle(ped, false) then
 			local veh = GetVehiclePedIsIn(ped, false)
 			local plate = GetVehicleNumberPlateText(veh)
-			local hasCarRadio = xSound:soundExists(plate)
+			local hasCarRadio = Soundity:soundExists(plate)
 			if customSong or hasCarRadio then
 				SetVehRadioStation(veh, "OFF")
 				SetVehicleRadioEnabled(veh, false)
