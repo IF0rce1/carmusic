@@ -241,7 +241,18 @@ local function isControlAction(action)
 		or action == "loop"
 		or action == "forward"
 		or action == "back"
-		or action == "faauzit"
+			or action == "faauzit"
+end
+
+local function isYouTubeUrl(url)
+	if type(url) ~= "string" then
+		return false
+	end
+
+	local normalized = url:lower()
+	return normalized:find("youtube%.com", 1, false) ~= nil
+		or normalized:find("youtu%.be", 1, false) ~= nil
+		or normalized:find("music%.youtube%.com", 1, false) ~= nil
 end
 
 local function isSoundLoopTracked(index)
@@ -275,6 +286,10 @@ RegisterNUICallback("action", function(data)
 		nameid = plate
 	end
 	if data.action == "seturl" then
+		if isYouTubeUrl(data.link) then
+			vRP.notify({"Sounity nu poate reda direct link-uri YouTube. Foloseste un link audio direct (.mp3/.aac/.m3u8/stream).","error"})
+			return
+		end
 		ApplySound(0.20,nameid,true)
 		SetUrl(data.link,nameid)
 		if xSound:soundExists(nameid) and xSound:isPaused(nameid) then
