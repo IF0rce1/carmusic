@@ -4,49 +4,218 @@ local vRP = Proxy.getInterface("vRP")
 Tunnel.bindInterface("xradio_music",Music)
 local datasoundinfo = {}
 local nuiaberto = false
-local rawXSound = exports.xsound
-local function safeXSoundCall(method, defaultValue, ...)
-	if not rawXSound or type(rawXSound[method]) ~= "function" then
+local interiorSoundState = {}
+local rawSounity = exports.sounity
+local sounitySounds = {}
+
+local function safeSounityCall(methods, defaultValue, ...)
+	if not rawSounity then
 		return defaultValue
 	end
 
-	local ok, result = pcall(rawXSound[method], rawXSound, ...)
-	if not ok then
-		return defaultValue
+	local methodList = type(methods) == "table" and methods or { methods }
+	for i = 1, #methodList do
+		local methodName = methodList[i]
+		local ok, result = pcall(function(...)
+			local fn = exports.sounity[methodName]
+			if type(fn) ~= "function" then
+				error(("missing export: %s"):format(methodName))
+			end
+			return fn(exports.sounity, ...)
+		end, ...)
+		if not ok then
+			ok, result = pcall(function(...)
+				local fn = exports.sounity[methodName]
+				if type(fn) ~= "function" then
+					error(("missing export: %s"):format(methodName))
+				end
+				return fn(...)
+			end, ...)
+		end
+		if ok then
+			return result
+		end
 	end
 
-	return result
+	return defaultValue
+end
+
+local function getSoundState(name)
+	return sounitySounds[name]
+end
+
+local function buildSoundOptions(soundState)
+	return json.encode({
+		volume = math.max(0.0, soundState.volume or 0.0),
+		outputType = "music",
+		loop = soundState.loop == true,
+		posX = soundState.pos.x,
+		posY = soundState.pos.y,
+		posZ = soundState.pos.z,
+		panningModel = "HRTF",
+		distanceModel = "inverse",
+		maxDistance = Config.MaxAudioDistance or 130.0,
+		refDistance = 1.9,
+		rolloffFactor = 1.55,
+		coneInnerAngle = 360.0,
+		coneOuterAngle = 140.0,
+		coneOuterGain = 0.38
+	})
+end
+
+local function createSounitySound(name, url, volume, pos, loop, autoStart)
+	local existing = getSoundState(name)
+	if existing and existing.identifier then
+			safeSounityCall({ "StopSound", "stopSound" }, nil, existing.identifier)
+			safeSounityCall({ "DisposeSound", "disposeSound" }, nil, existing.identifier)
+	end
+
+	local soundState = {
+		name = name,
+		url = url,
+		volume = math.max(0.0, volume or 0.0),
+		pos = pos or vector3(0.0, 0.0, 0.0),
+		loop = loop == true,
+		playing = autoStart == true,
+		paused = autoStart ~= true,
+		dynamic = true,
+		timestamp = 0.0,
+		entityNet = nil
+	}
+
+	local identifier = safeSounityCall({ "CreateSound", "createSound" }, nil, url, buildSoundOptions(soundState))
+	if not identifier then
+		return nil
+	end
+
+	soundState.identifier = identifier
+	sounitySounds[name] = soundState
+
+	if autoStart then
+		safeSounityCall({ "StartSound", "startSound" }, nil, identifier)
+	end
+
+	return soundState
 end
 
 xSound = {
-	soundExists = function(self, name) return safeXSoundCall("soundExists", false, name) end,
-	isPaused = function(self, name) return safeXSoundCall("isPaused", false, name) end,
-	isPlaying = function(self, name) return safeXSoundCall("isPlaying", false, name) end,
-	getMaxDuration = function(self, name) return safeXSoundCall("getMaxDuration", 0.0, name) end,
-	getTimeStamp = function(self, name) return safeXSoundCall("getTimeStamp", 0.0, name) end,
-	getVolume = function(self, name) return safeXSoundCall("getVolume", 0.0, name) end,
-	Destroy = function(self, name) return safeXSoundCall("Destroy", false, name) end,
-	isLooped = function(self, name) return safeXSoundCall("isLooped", false, name) end,
-	getLink = function(self, name) return safeXSoundCall("getLink", nil, name) end,
-	isDynamic = function(self, name) return safeXSoundCall("isDynamic", false, name) end,
-	getPosition = function(self, name) return safeXSoundCall("getPosition", vector3(0.0, 0.0, 0.0), name) end,
-	setTimeStamp = function(self, name, value) return safeXSoundCall("setTimeStamp", false, name, value) end,
-	Distance = function(self, name, value) return safeXSoundCall("Distance", false, name, value) end,
-	setSoundDynamic = function(self, name, value) return safeXSoundCall("setSoundDynamic", false, name, value) end,
-	setVolume = function(self, name, value) return safeXSoundCall("setVolume", false, name, value) end,
-	setVolumeMax = function(self, name, value) return safeXSoundCall("setVolumeMax", false, name, value) end,
-	setSoundURL = function(self, name, url) return safeXSoundCall("setSoundURL", false, name, url) end,
-	Position = function(self, name, pos) return safeXSoundCall("Position", false, name, pos) end,
-	setSoundLoop = function(self, name, value) return safeXSoundCall("setSoundLoop", false, name, value) end,
-	PlayUrlPos = function(self, name, url, vol, coords, loop, options) return safeXSoundCall("PlayUrlPos", false, name, url, vol, coords, loop, options) end,
-	Resume = function(self, name) return safeXSoundCall("Resume", false, name) end,
-	Pause = function(self, name) return safeXSoundCall("Pause", false, name) end,
+	soundExists = function(self, name)
+		local soundState = getSoundState(name)
+		return soundState ~= nil and soundState.identifier ~= nil
+	end,
+	isPaused = function(self, name) local s = getSoundState(name); return s and s.paused or false end,
+	isPlaying = function(self, name) local s = getSoundState(name); return s and s.playing or false end,
+	getMaxDuration = function(self, name) return 0.0 end,
+	getTimeStamp = function(self, name) local s = getSoundState(name); return s and s.timestamp or 0.0 end,
+	getVolume = function(self, name) local s = getSoundState(name); return s and s.volume or 0.0 end,
+	Destroy = function(self, name)
+		local s = getSoundState(name)
+		if not s or not s.identifier then return false end
+		safeSounityCall({ "StopSound", "stopSound" }, nil, s.identifier)
+		safeSounityCall({ "DisposeSound", "disposeSound" }, nil, s.identifier)
+		sounitySounds[name] = nil
+		interiorSoundState[name] = nil
+		return true
+	end,
+	isLooped = function(self, name) local s = getSoundState(name); return s and s.loop or false end,
+	getLink = function(self, name) local s = getSoundState(name); return s and s.url or nil end,
+	isDynamic = function(self, name) local s = getSoundState(name); return s and s.dynamic or false end,
+	getPosition = function(self, name) local s = getSoundState(name); return s and s.pos or vector3(0.0, 0.0, 0.0) end,
+	setTimeStamp = function(self, name, value) local s = getSoundState(name); if not s then return false end s.timestamp = math.max(0.0, value or 0.0) return true end,
+	Distance = function(self, name, value) local s = getSoundState(name); if not s then return false end s.maxDistance = value return true end,
+	setSoundDynamic = function(self, name, value)
+		local s = getSoundState(name)
+		if not s then return false end
+		s.dynamic = value == true
+		if s.dynamic and s.entityNet then
+			safeSounityCall({ "DetachSound", "detachSound" }, nil, s.identifier)
+		elseif not s.dynamic and s.entityNet then
+			safeSounityCall({ "AttachSound", "attachSound" }, nil, s.identifier, s.entityNet)
+		end
+		return true
+	end,
+	setVolume = function(self, name, value)
+		local s = getSoundState(name)
+		if not s then return false end
+		s.volume = math.max(0.0, value or 0.0)
+		return true
+	end,
+	setVolumeMax = function(self, name, value)
+		local s = getSoundState(name)
+		if not s then return false end
+		s.volume = math.max(0.0, value or 0.0)
+		return true
+	end,
+	setSoundURL = function(self, name, url)
+		local s = getSoundState(name)
+		if not s then return false end
+		local currentlyPlaying = s.playing and not s.paused
+		local recreated = createSounitySound(name, url, s.volume, s.pos, s.loop, currentlyPlaying)
+		if recreated then
+			recreated.dynamic = s.dynamic
+			recreated.timestamp = s.timestamp
+			recreated.entityNet = s.entityNet
+			if s.entityNet and not s.dynamic then
+				safeSounityCall({ "AttachSound", "attachSound" }, nil, recreated.identifier, s.entityNet)
+			end
+			return true
+		end
+		return false
+	end,
+	Position = function(self, name, pos)
+		local s = getSoundState(name)
+		if not s or not s.identifier then return false end
+		s.pos = pos
+		if s.dynamic then
+			safeSounityCall({ "MoveSound", "moveSound" }, nil, s.identifier, pos.x, pos.y, pos.z)
+		end
+		return true
+	end,
+	setSoundLoop = function(self, name, value)
+		local s = getSoundState(name)
+		if not s then return false end
+		s.loop = value == true
+		return true
+	end,
+	PlayUrlPos = function(self, name, url, vol, coords, loop, options)
+		local state = createSounitySound(name, url, vol, coords, loop, true)
+		if state and options and type(options.onPlayStart) == "function" then
+			options.onPlayStart({})
+		end
+		return state ~= nil
+	end,
+	Resume = function(self, name)
+		local s = getSoundState(name)
+		if not s or not s.identifier then return false end
+		s.paused = false
+		s.playing = true
+		safeSounityCall({ "StartSound", "startSound" }, nil, s.identifier)
+		return true
+	end,
+	Pause = function(self, name)
+		local s = getSoundState(name)
+		if not s or not s.identifier then return false end
+		s.paused = true
+		s.playing = false
+		safeSounityCall({ "StopSound", "stopSound" }, nil, s.identifier)
+		return true
+	end,
+	setAttachedEntity = function(self, name, entityNet)
+		local s = getSoundState(name)
+		if not s or not s.identifier then return false end
+		s.entityNet = entityNet
+		if s.dynamic then
+			safeSounityCall({ "DetachSound", "detachSound" }, nil, s.identifier)
+		else
+			safeSounityCall({ "AttachSound", "attachSound" }, nil, s.identifier, entityNet)
+		end
+		return true
+	end
 }
 local myjob = nil
 local nomidaberto
 local SoundsPlaying = {}
 local customSong = false
-local interiorSoundState = {}
 
 local function canControlCurrentVehicleRadio()
 	local ped = PlayerPedId()
@@ -144,11 +313,11 @@ RegisterNUICallback("action", function(data)
 		end
 	elseif data.action == "forward" then
 		if xSound:soundExists(nameid) then
-			TriggerServerEvent("carmusic:ChangePosition", 10, nameid)
+			vRP.notify({"Seek momentan indisponibil pe Sounity (stream live-safe).","warning"})
 		end
 	elseif data.action == "back" then
 		if xSound:soundExists(nameid) then
-			TriggerServerEvent("carmusic:ChangePosition", -10, nameid)
+			vRP.notify({"Seek momentan indisponibil pe Sounity (stream live-safe).","warning"})
 		end
 	end
 end)
@@ -645,6 +814,7 @@ function StartMusicLoop(i)
 					   and GetVehicleNumberPlateText(carro) == v.name then
 
 						carrofound = true
+						xSound:setAttachedEntity(v.name, v.popo)
 						local cordsveh  = GetEntityCoords(carro)
 						local geraldist = #(cordsveh - coordsped)
 						local speedcar  = GetEntitySpeed(carro) * 3.6
