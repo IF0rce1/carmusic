@@ -8,17 +8,36 @@ local interiorSoundState = {}
 local rawSounity = exports.sounity
 local sounitySounds = {}
 
-local function safeSounityCall(method, defaultValue, ...)
-	if not rawSounity or type(rawSounity[method]) ~= "function" then
+local function safeSounityCall(methods, defaultValue, ...)
+	if not rawSounity then
 		return defaultValue
 	end
 
-	local ok, result = pcall(rawSounity[method], ...)
-	if not ok then
-		return defaultValue
+	local methodList = type(methods) == "table" and methods or { methods }
+	for i = 1, #methodList do
+		local methodName = methodList[i]
+		local ok, result = pcall(function(...)
+			local fn = exports.sounity[methodName]
+			if type(fn) ~= "function" then
+				error(("missing export: %s"):format(methodName))
+			end
+			return fn(exports.sounity, ...)
+		end, ...)
+		if not ok then
+			ok, result = pcall(function(...)
+				local fn = exports.sounity[methodName]
+				if type(fn) ~= "function" then
+					error(("missing export: %s"):format(methodName))
+				end
+				return fn(...)
+			end, ...)
+		end
+		if ok then
+			return result
+		end
 	end
 
-	return result
+	return defaultValue
 end
 
 local function getSoundState(name)
@@ -47,8 +66,8 @@ end
 local function createSounitySound(name, url, volume, pos, loop, autoStart)
 	local existing = getSoundState(name)
 	if existing and existing.identifier then
-		safeSounityCall("StopSound", nil, existing.identifier)
-		safeSounityCall("DisposeSound", nil, existing.identifier)
+			safeSounityCall({ "StopSound", "stopSound" }, nil, existing.identifier)
+			safeSounityCall({ "DisposeSound", "disposeSound" }, nil, existing.identifier)
 	end
 
 	local soundState = {
@@ -64,7 +83,7 @@ local function createSounitySound(name, url, volume, pos, loop, autoStart)
 		entityNet = nil
 	}
 
-	local identifier = safeSounityCall("CreateSound", nil, url, buildSoundOptions(soundState))
+	local identifier = safeSounityCall({ "CreateSound", "createSound" }, nil, url, buildSoundOptions(soundState))
 	if not identifier then
 		return nil
 	end
@@ -73,7 +92,7 @@ local function createSounitySound(name, url, volume, pos, loop, autoStart)
 	sounitySounds[name] = soundState
 
 	if autoStart then
-		safeSounityCall("StartSound", nil, identifier)
+		safeSounityCall({ "StartSound", "startSound" }, nil, identifier)
 	end
 
 	return soundState
@@ -92,8 +111,8 @@ xSound = {
 	Destroy = function(self, name)
 		local s = getSoundState(name)
 		if not s or not s.identifier then return false end
-		safeSounityCall("StopSound", nil, s.identifier)
-		safeSounityCall("DisposeSound", nil, s.identifier)
+		safeSounityCall({ "StopSound", "stopSound" }, nil, s.identifier)
+		safeSounityCall({ "DisposeSound", "disposeSound" }, nil, s.identifier)
 		sounitySounds[name] = nil
 		interiorSoundState[name] = nil
 		return true
@@ -109,9 +128,9 @@ xSound = {
 		if not s then return false end
 		s.dynamic = value == true
 		if s.dynamic and s.entityNet then
-			safeSounityCall("DetachSound", nil, s.identifier)
+			safeSounityCall({ "DetachSound", "detachSound" }, nil, s.identifier)
 		elseif not s.dynamic and s.entityNet then
-			safeSounityCall("AttachSound", nil, s.identifier, s.entityNet)
+			safeSounityCall({ "AttachSound", "attachSound" }, nil, s.identifier, s.entityNet)
 		end
 		return true
 	end,
@@ -137,7 +156,7 @@ xSound = {
 			recreated.timestamp = s.timestamp
 			recreated.entityNet = s.entityNet
 			if s.entityNet and not s.dynamic then
-				safeSounityCall("AttachSound", nil, recreated.identifier, s.entityNet)
+				safeSounityCall({ "AttachSound", "attachSound" }, nil, recreated.identifier, s.entityNet)
 			end
 			return true
 		end
@@ -148,7 +167,7 @@ xSound = {
 		if not s or not s.identifier then return false end
 		s.pos = pos
 		if s.dynamic then
-			safeSounityCall("MoveSound", nil, s.identifier, pos.x, pos.y, pos.z)
+			safeSounityCall({ "MoveSound", "moveSound" }, nil, s.identifier, pos.x, pos.y, pos.z)
 		end
 		return true
 	end,
@@ -170,7 +189,7 @@ xSound = {
 		if not s or not s.identifier then return false end
 		s.paused = false
 		s.playing = true
-		safeSounityCall("StartSound", nil, s.identifier)
+		safeSounityCall({ "StartSound", "startSound" }, nil, s.identifier)
 		return true
 	end,
 	Pause = function(self, name)
@@ -178,7 +197,7 @@ xSound = {
 		if not s or not s.identifier then return false end
 		s.paused = true
 		s.playing = false
-		safeSounityCall("StopSound", nil, s.identifier)
+		safeSounityCall({ "StopSound", "stopSound" }, nil, s.identifier)
 		return true
 	end,
 	setAttachedEntity = function(self, name, entityNet)
@@ -186,9 +205,9 @@ xSound = {
 		if not s or not s.identifier then return false end
 		s.entityNet = entityNet
 		if s.dynamic then
-			safeSounityCall("DetachSound", nil, s.identifier)
+			safeSounityCall({ "DetachSound", "detachSound" }, nil, s.identifier)
 		else
-			safeSounityCall("AttachSound", nil, s.identifier, entityNet)
+			safeSounityCall({ "AttachSound", "attachSound" }, nil, s.identifier, entityNet)
 		end
 		return true
 	end
