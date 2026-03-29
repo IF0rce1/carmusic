@@ -2,9 +2,13 @@ Config = {}
 
 Config.DistanceToVolume = 10.5
 Config.DistanceToVolumeAuzit = 14.0
-Config.PlayToEveryone = true 
-Config.ItemInVehicle = true 
-Config.CommandVehicle = "carradio" 
+Config.PlayToEveryone = true
+Config.ItemInVehicle = true
+Config.CommandVehicle = "carradio"
+Config.YouTubeResolverInstances = {
+	"https://piped.video",
+	"https://pipedapi.kavin.rocks"
+}
 
 -- ── Acoustic / distance settings ─────────────────────────────────────────────
 
@@ -16,7 +20,7 @@ Config.BaseRangeClosed = 18.0
 -- ex: 4 deschise → 18 + 4*16 = 82 m range maxim
 Config.RangePerOpening = 16.0
 
--- Distanta absoluta dupa care xSound nu mai calculeaza nimic (guard perf).
+-- Distanta absoluta dupa care sistemul audio 3D nu mai calculeaza nimic (guard perf).
 -- Trebuie sa fie >= BaseRangeClosed + 4*RangePerOpening + slack.
 Config.MaxAudioDistance = 130.0
 

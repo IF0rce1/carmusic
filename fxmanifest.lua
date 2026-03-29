@@ -1,6 +1,7 @@
 
 fx_version 'bodacious'
 games { 'gta5' }
+dependency 'sounity'
 
 ui_page 'html/index.html'
 
