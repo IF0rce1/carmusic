@@ -1,7 +1,150 @@
 
+local function isYouTubeUrl(url)
+	if type(url) ~= "string" then
+		return false
+	end
 
+	local normalized = url:lower()
+	return normalized:find("youtube%.com", 1, false) ~= nil
+		or normalized:find("youtu%.be", 1, false) ~= nil
+		or normalized:find("music%.youtube%.com", 1, false) ~= nil
+end
 
-local xSound = exports.xsound
+local function extractYouTubeVideoId(url)
+	if type(url) ~= "string" then
+		return nil
+	end
+
+	local fromWatch = url:match("[?&]v=([%w_-]+)")
+	if fromWatch then
+		return fromWatch
+	end
+
+	local fromShort = url:match("youtu%.be/([%w_-]+)")
+	if fromShort then
+		return fromShort
+	end
+
+	local fromEmbed = url:match("youtube%.com/embed/([%w_-]+)")
+	if fromEmbed then
+		return fromEmbed
+	end
+
+	return nil
+end
+
+local function resolveYouTubeToAudioUrl(url, callback)
+	local videoId = extractYouTubeVideoId(url)
+	if not videoId then
+		callback(nil)
+		return
+	end
+
+	local endpoints = Config.YouTubeResolverInstances or {
+		"https://piped.video",
+		"https://pipedapi.kavin.rocks",
+		"https://inv.nadeko.net",
+		"https://invidious.privacyredirect.com"
+	}
+	local index = 1
+
+	local function chooseBestAudioUrl(list)
+		if type(list) ~= "table" then
+			return nil
+		end
+
+		local bestUrl = nil
+		local bestBitrate = -1
+		for _, stream in pairs(list) do
+			if stream and stream.url then
+				local bitrate = tonumber(stream.bitrate) or tonumber(stream.averageBitrate) or 0
+				local mimeType = tostring(stream.mimeType or stream.type or "")
+				if mimeType == "" or mimeType:lower():find("audio", 1, true) then
+					if bitrate > bestBitrate then
+						bestBitrate = bitrate
+						bestUrl = stream.url
+					end
+				end
+			end
+		end
+
+		return bestUrl
+	end
+
+	local function resolveFromPiped(endpoint, onDone)
+		local requestUrl = ("%s/api/v1/streams/%s"):format(endpoint, videoId)
+		PerformHttpRequest(requestUrl, function(statusCode, body)
+			if statusCode >= 200 and statusCode < 300 and body then
+				local payload = json.decode(body)
+				local bestUrl = payload and chooseBestAudioUrl(payload.audioStreams)
+				if bestUrl then
+					onDone(bestUrl)
+					return
+				end
+			end
+			onDone(nil)
+		end, "GET", "", { ["Accept"] = "application/json" })
+	end
+
+	local function resolveFromInvidious(endpoint, onDone)
+		local requestUrl = ("%s/api/v1/videos/%s"):format(endpoint, videoId)
+		PerformHttpRequest(requestUrl, function(statusCode, body)
+			if statusCode >= 200 and statusCode < 300 and body then
+				local payload = json.decode(body)
+				local bestUrl = payload and chooseBestAudioUrl(payload.adaptiveFormats)
+				if bestUrl then
+					onDone(bestUrl)
+					return
+				end
+			end
+			onDone(nil)
+		end, "GET", "", { ["Accept"] = "application/json" })
+	end
+
+	local function tryNextEndpoint()
+		if index > #endpoints then
+			callback(nil)
+			return
+		end
+
+		local endpoint = endpoints[index]
+		index = index + 1
+
+		resolveFromPiped(endpoint, function(urlFromPiped)
+			if urlFromPiped then
+				callback(urlFromPiped)
+				return
+			end
+
+			resolveFromInvidious(endpoint, function(urlFromInvidious)
+				if urlFromInvidious then
+					callback(urlFromInvidious)
+					return
+				end
+				tryNextEndpoint()
+			end)
+		end)
+	end
+
+	tryNextEndpoint()
+end
+
+RegisterNetEvent("carmusic:ResolveYouTubeUrl")
+AddEventHandler("carmusic:ResolveYouTubeUrl", function(requestId, url)
+	local src = source
+	if type(requestId) ~= "string" then
+		return
+	end
+
+	if not isYouTubeUrl(url) then
+		TriggerClientEvent("carmusic:ResolveYouTubeUrlResult", src, requestId, url)
+		return
+	end
+
+	resolveYouTubeToAudioUrl(url, function(resolvedUrl)
+		TriggerClientEvent("carmusic:ResolveYouTubeUrlResult", src, requestId, resolvedUrl)
+	end)
+end)
 
 RegisterNetEvent("carmusic:ChangeVolume")
 AddEventHandler("carmusic:ChangeVolume", function(vol, nome)
